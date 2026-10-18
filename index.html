@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#2fa83a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>exePlays: Ungehusstled</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<!-- HUD -->
+<div id="hud" class="hidden">
+  <div id="topbar">
+    <div id="hearts"></div><div id="apples"></div>
+    <div id="res">
+      <span class="r bronze"><i></i><b id="rBronze">0</b></span>
+      <span class="r iron"><i></i><b id="rIron">0</b></span>
+      <span class="r gold"><i></i><b id="rGold">0</b></span>
+      <span class="r sand"><i></i><b id="rSand">0</b></span>
+    </div>
+  </div>
+  <div id="board"></div>
+  <div id="feed"></div>
+  <div id="captions"></div>
+  <div id="shopHint" class="hidden">🛒 Dealer in der Nähe</div>
+  <div id="stick"><div id="knob"></div></div>
+  <div id="buttons">
+    <button id="bShop" class="btn small">🛒</button>
+    <button id="bHit" class="btn big">⚔️</button>
+  </div>
+</div>
+
+<!-- Intro -->
+<div id="intro" class="screen">
+  <div class="warn">
+    <p>In dem folgenden Spiel kommt ein Best of von exePlays.</p>
+    <p><b>Warnung:</b></p>
+    <p>Dieses Spiel kann verstörende und ziemlich verrückte Sequenzen beinhalten.</p>
+    <p>LG Ihr exePlays Team</p>
+  </div>
+  <div class="tap">Tippen zum Fortfahren</div>
+</div>
+
+<!-- Menu -->
+<div id="menu" class="screen hidden">
+  <h1 class="logo">exePlays</h1>
+  <h2>Minecraft <span>Ungehusstled</span></h2>
+  <p class="sub">Bedwars · Folge <b id="episode">#14</b></p>
+  <p class="pick">Wer spielt? Der andere hilft (meistens).</p>
+  <div id="chars"></div>
+  <div class="bonus">
+    <div class="bonusT">⚽ Bonus: AmTorVorbeigehustled <span>(Elfmeter, Super Smash Football &amp; FIFA-Bugs)</span></div>
+    <button class="mcbtn kickBtn" data-char="leon">als Leon</button>
+    <button class="mcbtn kickBtn" data-char="moritz">als Moritz</button>
+  </div>
+  <button id="bBios" class="mcbtn bios">📜 Steckbriefe: Wer sind Leon &amp; Moritz?</button>
+  <p class="tip" id="tip"></p>
+  <p class="hs" id="hs"></p>
+</div>
+
+<!-- Steckbriefe -->
+<div id="bios" class="screen hidden">
+  <div class="chest bioBox">
+    <div class="chestTitle">Steckbriefe <span>(aus 22 Folgen exePlays, 2015)</span></div>
+    <div id="bioList"></div>
+    <button id="biosClose" class="mcbtn">Zurück</button>
+  </div>
+</div>
+
+<!-- Shop -->
+<div id="shop" class="screen hidden">
+  <div class="chest">
+    <div class="chestTitle">Dealer <span>(der Shop vom Server)</span></div>
+    <div id="shopItems"></div>
+    <div class="chestInv">Dein Zeug: <span id="shopInv"></span></div>
+    <button id="shopClose" class="mcbtn">Fertig</button>
+  </div>
+</div>
+
+<!-- Game over -->
+<div id="over" class="screen hidden">
+  <h1 id="overTitle">FAIL!!!</h1>
+  <p id="overSub"></p>
+  <div id="overStats"></div>
+  <button id="again" class="mcbtn">Nochmal (nächste Folge)</button>
+  <button id="toMenu" class="mcbtn ghost">Charakter wechseln</button>
+</div>
+
+<button id="kickExit" class="mcbtn hidden">✕</button>
+
+<div id="rotate">Bitte Handy hochkant halten 📱</div>
+
+<script src="game.js"></script>
+<script src="kick.js"></script>
+</body>
+</html>
