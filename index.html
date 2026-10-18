@@ -51,9 +51,22 @@
   <h1 class="logo">exePlays</h1>
   <h2>Minecraft <span>Ungehusstled</span></h2>
   <p class="sub">Bedwars · Folge <b id="episode">#14</b></p>
-  <p class="pick">1. Map wählen</p>
-  <div id="maps"></div>
-  <p class="pick">2. Wer spielt? Der andere hilft (meistens).</p>
+
+  <div class="sect">Spielmodus</div>
+  <div id="modes"></div>
+  <p id="modeDesc" class="modeDesc"></p>
+
+  <div class="sect">Map</div>
+  <div id="mapStage">
+    <canvas id="mapCanvas"></canvas>
+    <button id="mapPrevBtn" class="arrow left">◀</button>
+    <button id="mapNextBtn" class="arrow right">▶</button>
+    <div class="mapInfo"><div id="mapName"></div><div id="mapEp"></div></div>
+  </div>
+  <div id="mapDots"></div>
+  <p id="mapDesc" class="mapDesc"></p>
+
+  <div class="sect">Wer spielt? <span>(tippen = los!)</span></div>
   <div id="chars"></div>
   <div class="bonus">
     <div class="bonusT">⚽ Bonus: AmTorVorbeigehustled <span>(Elfmeter, Super Smash Football &amp; FIFA-Bugs)</span></div>
@@ -100,5 +113,6 @@
 <script src="maps.js"></script>
 <script src="game.js"></script>
 <script src="kick.js"></script>
+<script src="menu.js"></script>
 </body>
 </html>

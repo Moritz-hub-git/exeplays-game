@@ -158,9 +158,12 @@ const TILECOL = {
   1: ['#5fa843', '#6cb84c', '#55993b'], 2: ['#e3d39a', '#d8c88c', '#ecdfab'], 3: ['#8c8c8c', '#7e7e7e', '#999'],
   4: ['#a8814b', '#9a7442', '#b58c53'], 5: ['#e8e8b0', '#dcdca0', '#f0f0c0'], 6: ['#6e4b26', '#7a5530', '#62421f'],
   7: ['#d9c486', '#cdb877', '#e4d197'], 8: ['#9a948a', '#8a847a', '#aaa49a'], 9: ['#2f7a2a', '#3b8c33', '#266322'],
+  10: ['#2f8fd8', '#3a9be0', '#2a82c8'], 11: ['#ff6a00', '#ff8c1a', '#e04a00'], 12: ['#ffd640', '#ffcc2a', '#f5c21e'],
+  13: ['#7a2a2a', '#8a3232', '#6a2222'], 14: ['#2f6e2a', '#367a30', '#285f24'], 15: ['#e3d39a', '#d8c88c', '#ecdfab'],
 };
-const WALL_TOP = { 6: '#8a6236', 7: '#efe0ad', 9: '#4caf3c' }, WALL_SIDE = { 6: '#4a3015', 7: '#b8a368', 9: '#5a3a1a' };
-const isWall = t => t === 6 || t === 7 || t === 9;
+const WALL_TOP = { 6: '#8a6236', 7: '#efe0ad', 9: '#4caf3c', 14: '#3f8f37', 15: '#4caf3c' }, WALL_SIDE = { 6: '#4a3015', 7: '#b8a368', 9: '#5a3a1a', 14: '#1f4d1c', 15: '#5a3a1a' };
+const isWall = t => t === 6 || t === 7 || t === 9 || t === 14 || t === 15;
+const breakable = t => t === 6 || t === 7 || t === 14;
 const walkable = t => t > 0 && !isWall(t);
 const tileTex = {};
 function buildTiles() {
@@ -172,6 +175,9 @@ function buildTiles() {
     for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) { g.fillStyle = cols[(rnd() * 3) | 0]; g.fillRect(x, y, 1, 1); }
     if (k === '4' || k === '6') { g.fillStyle = k === '6' ? '#4a3015' : '#7d5a2f'; g.fillRect(0, 3, 8, 1); g.fillRect(0, 7, 8, 1); }
     if (k === '2') { g.fillStyle = '#cbb97a'; g.fillRect(0, 7, 8, 1); }
+    if (k === '12') { g.fillStyle = '#e0a800'; g.fillRect(2, 2, 1, 1); g.fillRect(5, 5, 2, 1); g.fillRect(6, 1, 1, 1); }
+    if (k === '10') { g.fillStyle = '#7cc4f2'; g.fillRect(1, 2, 3, 1); g.fillRect(4, 6, 3, 1); }
+    if (k === '11') { g.fillStyle = '#ffd040'; g.fillRect(2, 1, 2, 1); g.fillRect(5, 4, 2, 1); g.fillRect(1, 6, 1, 1); }
     if (k === '7') { g.fillStyle = '#b8a368'; g.fillRect(0, 3, 8, 1); g.fillRect(0, 7, 8, 1); g.fillRect(3, 0, 1, 3); g.fillRect(6, 4, 1, 3); }
     tileTex[k] = c;
   }
@@ -181,26 +187,27 @@ buildTiles();
 // ---------- Spielzustand ----------
 let S = null; // state
 let selectedChar = 'leon';
-let selectedMap = localStorage.getItem('exe_map') || 'klassik';
-if (!MAPS[selectedMap]) selectedMap = 'klassik';
+let selectedMap = localStorage.getItem('exe_map') || 'insel';
+if (!MAPS[selectedMap]) selectedMap = 'insel';
+let selectedMode = localStorage.getItem('exe_mode') || 'klassik';
+if (!MODES[selectedMode]) selectedMode = 'klassik';
 let episode = +(localStorage.getItem('exe_episode') || 14);
 const best = JSON.parse(localStorage.getItem('exe_best') || '{"wins":0,"kills":0}');
 
 function freshInv() { return { bronze: 0, iron: 0, gold: 0, sand: 0 }; }
 
-function startGame(charKey, mapId = selectedMap) {
-  selectedChar = charKey; selectedMap = mapId; localStorage.setItem('exe_map', mapId);
-  const def = MAPS[mapId], M = def.build();
+function startGame(charKey, mapId = selectedMap, modeId = selectedMode) {
+  selectedChar = charKey; selectedMap = mapId; selectedMode = modeId;
+  localStorage.setItem('exe_map', mapId); localStorage.setItem('exe_mode', modeId);
+  const G = buildSetup(mapId, modeId), def = G.def, mode = G.mode;
   const pc = CHARS[charKey], oc = CHARS[other(charKey)];
   const beds = {};
-  for (const k in M.beds) { const [x, y, hp] = M.beds[k]; beds[k] = { x, y, hp, max: hp, alive: true }; }
+  for (const k in G.beds) { const b = G.beds[k]; beds[k] = { x: b.x, y: b.y, hp: b.hp, max: b.hp, alive: true }; }
   S = {
-    t: 0, mapId, mapDef: def, map: M.map, under: new Uint8Array(MW * MH), mapVer: 0, C: M.C, void: M.void,
-    enemyTeams: M.enemyTeams, allTeams: ['gruen', ...M.enemyTeams], ai: M.ai, border: M.border ? { ...M.border, r: M.border.r0, tick: 0 } : null,
-    beds,
-    spawn: { x: M.spawn[0], y: M.spawn[1] },
-    shopNpc: { x: M.shop[0], y: M.shop[1] },
-    gens: M.gens.map(([x, y, kind, every, cap]) => ({ x, y, kind, every, cap, t: Math.random() * every })),
+    t: 0, mapId, modeId, mapDef: def, mode, theme: def.theme, map: G.map, under: new Uint8Array(MW * MH), mapVer: 0, C: G.C, void: G.void,
+    enemyTeams: G.enemyTeams, allTeams: G.teams, ai: mode.ai, genMul: G.genMul, border: G.border ? { ...G.border, r: G.border.r0, tick: 0 } : null,
+    beds, spawn: { x: 0, y: 0 }, shopNpc: null,
+    gens: G.gens.map(([x, y, kind, every, cap]) => ({ x, y, kind, every: every * G.genMul, cap, t: Math.random() * every, team: null })),
     items: [], ents: [], parts: [], floats: [], arrows: [], fields: {}, flyers: [],
     inv: { bronze: 4, iron: 0, gold: 0, sand: 24 },
     sword: 0, armor: 0, bow: 0, apples: 0, appleT: 0, shader: false,
@@ -209,23 +216,25 @@ function startGame(charKey, mapId = selectedMap) {
     gagT: 18, over: false, overT: 0, shake: 0,
     firstBedHit: false, wave: 1,
   };
+  // Endstein unter die Betten, dann Basen (Spawn, Generator, Dealer) automatisch aufbauen
+  for (const k in S.beds) { const b = S.beds[k]; setTile(b.x, b.y, 5); setTile(b.x, b.y + 1, 5); }
+  setupTeams();
   S.player = mkChar(charKey, pc, S.spawn.x, S.spawn.y, true);
   cam.x = S.spawn.x * T; cam.y = S.spawn.y * T;
-  S.partner = mkChar(other(charKey), oc, S.spawn.x + 1, S.spawn.y + 0.5, false);
+  const ps = nearestWalkable(S.spawn.x + 1, S.spawn.y);
+  S.partner = mkChar(other(charKey), oc, ps.x, ps.y, false);
   S.ents.push(S.player, S.partner);
-  setupTeams();
-  // Endstein unter die Betten
-  for (const k in S.beds) { const b = S.beds[k]; setTile(b.x, b.y, 5); setTile(b.x, b.y + 1, 5); }
   $('hud').classList.remove('hidden');
   ['menu', 'over', 'intro'].forEach(id => $(id).classList.add('hidden'));
   updateHud(true);
   setTimeout(() => say(S.player, `Jamoin und herzlich willkommen! Heute dabei: ${S.partner.def.ign}`, 3.2), 400);
   setTimeout(() => say(S.partner, 'Hallo!'), 2600);
-  setTimeout(() => caption(`Bedwars #${episode}\n${def.name}`, -6, 0.45, 0.3), 300);
-  feed(`<span class="tag">[BedWars]</span> ${def.name}: ${def.desc}`);
-  if (mapId === 'loldorf') setTimeout(() => say(S.partner, 'Wo ist mein Haus??'), 6000);
-  if (mapId === 'border') setTimeout(() => caption('Du bist 21 Blöcke\nvom Border entfernt!', -5, 0.1, 0.5), 5000);
-  if (mapId === 'duell') setTimeout(() => say(S.partner, 'Pass auf, die haben Bogen!'), 6000);
+  setTimeout(() => caption(`Bedwars #${episode}\n${mode.name} · ${def.name}`, -6, 0.4, 0.3), 300);
+  feed(`<span class="tag">[BedWars]</span> ${mode.name} auf ${def.name}: ${mode.desc}`);
+  const hint = { dorf: 'Wo ist mein Haus??', tuktuk: 'Achtung, im Wasser sind wir langsam!', nether: 'Nicht in die Lava, das brennt!', labyrinth: 'Wo geht es hier lang?!', kaese: 'Käse!! Aber pass auf die Löcher auf.', stern: 'Schmale Brücken... gleich fliegt einer.' }[mapId];
+  if (hint) setTimeout(() => say(S.partner, hint), 6000);
+  if (S.border) setTimeout(() => caption(`Du bist ${Math.round(S.border.r0)} Blöcke\nvom Border entfernt!`, -5, 0.1, 0.5), 5000);
+  if (mode.oneEnemy) setTimeout(() => say(S.partner, 'Pass auf, die haben Bogen!'), 7500);
 }
 
 function mkChar(key, def, x, y, isPlayer) {
@@ -251,7 +260,7 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
 
 // ---------- Wegfindung (Dijkstra-Flussfeld) ----------
 // Kosten: Boden 1, Void 3 (überbrücken), gesetzte Mauer 4, Holzwand 7, Bäume/Betten unpassierbar
-function tileCost(t, voidCost) { if (t === 0) return voidCost; if (t === 9) return Infinity; if (t === 7) return 4; if (t === 6) return 7; return 1; }
+function tileCost(t, voidCost) { if (t === 0) return voidCost; if (t === 9 || t === 15) return Infinity; if (t === 7) return 4; if (t === 6 || t === 14) return 7; if (t === 10) return 2; if (t === 11) return 6; return 1; }
 function fieldTo(sources, key, voidCost) {
   const cached = S.fields[key];
   if (cached && (cached.ver === S.mapVer || S.t - cached.t < 0.35)) return cached.d;
@@ -364,7 +373,7 @@ function updateHud(force) {
   $('hearts').textContent = h;
   $('apples').textContent = S.apples ? `🍎 ${S.apples}` : '';
   $('rBronze').textContent = S.inv.bronze; $('rIron').textContent = S.inv.iron; $('rGold').textContent = S.inv.gold; $('rSand').textContent = S.inv.sand;
-  let html = `<div class="t">${S.mapDef.name}</div>`;
+  let html = `<div class="t">${S.mode.ico} ${S.mode.name} · ${S.mapDef.name}</div>`;
   for (const k of S.allTeams) {
     const b = S.beds[k];
     const alive = S.ents.filter(e => e.team === k && !e.dead).length;
@@ -429,7 +438,7 @@ function tnt() {
     const a = Math.atan2(e.y - p.y, e.x - p.x); e.kbx = Math.cos(a) * 9; e.kby = Math.sin(a) * 9; e.lastHitBy = p; damage(e, 6, p);
   }
   for (let y = Math.floor(p.y) - 2; y <= Math.floor(p.y) + 2; y++) for (let x = Math.floor(p.x) - 2; x <= Math.floor(p.x) + 2; x++) {
-    const t = tileAt(x, y); if (t === 6 || t === 7) breakWall(x, y);
+    const t = tileAt(x, y); if (breakable(t)) breakWall(x, y);
   }
   closeShop(); caption('BOOOM', 8);
 }
@@ -445,17 +454,22 @@ function nearestWalkable(x, y, maxR = 3) {
   return { x, y };
 }
 function setupTeams() {
-  S.dealers = { gruen: S.shopNpc }; S.roster = {}; S.respawnQ = []; S.bedAlert = {};
-  const gb = S.beds.gruen;
-  for (const g of S.gens) g.team = Math.hypot(g.x - (gb.x + 0.5), g.y - (gb.y + 1)) < 5 ? 'gruen' : null;
-  for (const k of S.enemyTeams) {
+  S.dealers = {}; S.roster = {}; S.respawnQ = []; S.bedAlert = {};
+  for (const k of S.allTeams) {
     const b = S.beds[k], bx = b.x + 0.5, by = b.y + 1, a = Math.atan2(S.C + 0.5 - by, S.C + 0.5 - bx), perp = a + Math.PI / 2;
     const g = nearestWalkable(bx + Math.cos(perp) * 2.2, by + Math.sin(perp) * 2.2);
     const d = nearestWalkable(bx - Math.cos(perp) * 2.2, by - Math.sin(perp) * 2.2);
-    S.gens.push({ x: g.x, y: g.y, kind: 'bronze', every: 1.1, cap: 16, t: 0, team: k },
-      { x: g.x, y: g.y, kind: 'iron', every: 6.5, cap: 8, t: 0, team: k },
-      { x: g.x, y: g.y, kind: 'gold', every: 24, cap: 4, t: 0, team: k });
+    const gm = S.genMul;
+    S.gens.push({ x: g.x, y: g.y, kind: 'bronze', every: 1.1 * gm, cap: 16, t: 0, team: k },
+      { x: g.x, y: g.y, kind: 'iron', every: 6.5 * gm, cap: 8, t: 0, team: k },
+      { x: g.x, y: g.y, kind: 'gold', every: 22 * gm, cap: 4, t: 0, team: k });
     S.dealers[k] = { x: d.x, y: d.y, team: k };
+    if (k === 'gruen') {
+      S.shopNpc = S.dealers.gruen;
+      const sp = nearestWalkable(bx + Math.cos(a) * 1.9, by + Math.sin(a) * 1.9);
+      S.spawn = { x: sp.x, y: sp.y };
+      continue;
+    }
     S.roster[k] = S.ai.roster;
     for (let i = 0; i < S.roster[k]; i++) S.respawnQ.push({ team: k, t: 2 + i * 2.5 + Math.random() * 2 });
   }
@@ -744,6 +758,7 @@ function followField(e, d, dt) {
     return;
   }
   if (isWall(t)) {
+    if (!breakable(t)) { e.vx = e.vy = 0; return; }
     e.vx = e.vy = 0; e.breakT += dt;
     if (e.breakT > 0.5) { e.breakT = 0; e.swing = 0.18; chipWall(n.x, n.y, 0.3 + e.sword * 0.08); if (Math.random() < 0.04) say(e, 'Mach die Mauer weg!!'); }
     return;
@@ -816,7 +831,8 @@ function kill(e, by, fell) {
   e.dead = true;
   const nm = n => `<b style="color:${TEAMS[n.team].col}">${n.name}</b>`;
   if (fell) feed(`<span class="tag">[BedWars]</span> ${nm(e)} ist ins Void gefallen${by && by !== e ? ` (Knockback von ${nm(by)})` : ''}.`);
-  else feed(`<span class="tag">[BedWars]</span> ${nm(e)} wurde von ${by ? nm(by) : '???'} getötet.`);
+  else if (!by) feed(`<span class="tag">[BedWars]</span> ${nm(e)} ist in der Lava verbrannt.`);
+  else feed(`<span class="tag">[BedWars]</span> ${nm(e)} wurde von ${nm(by)} getötet.`);
   if (e.kind === 'enemy') {
     // Ausrüstung und Blöcke des Gegners sind einfach weg
     freshGear(e);
@@ -883,7 +899,7 @@ function attack(a) {
   if (a === S.player) {
     const tx = Math.floor(a.x + a.fx * 0.9), ty = Math.floor(a.y + a.fy * 0.9);
     const t = tileAt(tx, ty);
-    if (t === 6 || t === 7) { a.atkCd = 0.3; a.swing = 0.18; chipWall(tx, ty, 0.35); return true; }
+    if (breakable(t)) { a.atkCd = 0.3; a.swing = 0.18; chipWall(tx, ty, 0.35); return true; }
     a.atkCd = 0.25; a.swing = 0.18;
   }
   return false;
@@ -930,7 +946,7 @@ function destroyBed(k, by) {
 const wallHp = {};
 function chipWall(x, y, amount) {
   const i = y * MW + x, t = S.map[i];
-  const max = t === 6 ? 1.6 : 0.9;
+  const max = t === 6 ? 1.6 : t === 14 ? 2.2 : 0.9;
   wallHp[i] = (wallHp[i] ?? max) - amount; sfx.crack();
   for (let n = 0; n < 3; n++) S.parts.push({ x: x + 0.5, y: y + 0.6, vx: (Math.random() - 0.5) * 3, vy: -Math.random() * 3, t: 0.4, col: WALL_TOP[t] || '#ccc', s: 3 });
   if (wallHp[i] <= 0) breakWall(x, y);
@@ -938,7 +954,7 @@ function chipWall(x, y, amount) {
 function breakWall(x, y) {
   const i = y * MW + x, t = S.map[i];
   delete wallHp[i];
-  setTile(x, y, t === 6 ? 4 : (S.under[i] || 2));
+  setTile(x, y, t === 6 ? 4 : t === 14 ? 1 : (S.under[i] || 2));
 }
 function playerBuild(p, dt) {
   p.buildT -= dt;
@@ -995,6 +1011,12 @@ function update(dt) {
     if (S.beds[q.team].alive) S.ents.push(mkEnemy(q.team));
     return false;
   });
+  // Lava brennt
+  for (const e of S.ents) {
+    if (e.dead || e.fallT > 0 || tileAt(e.x, e.y) !== 11) { e.lavaT = 0; continue; }
+    e.lavaT = (e.lavaT || 0) + dt;
+    if (e.lavaT >= 0.5) { e.lavaT = 0; damage(e, 1.5, null); for (let n = 0; n < 4; n++) S.parts.push({ x: e.x, y: e.y - 0.3, vx: (Math.random() - 0.5) * 2, vy: -2 - Math.random() * 2, t: 0.5, col: Math.random() < 0.5 ? '#ff8c1a' : '#ffd040', s: 3 }); if (e === S.player && Math.random() < 0.15) say(e, 'AUA, das brennt!'); }
+  }
   // Heilung an der eigenen Basis (wer 3 s keinen Schaden bekam)
   for (const e of S.ents) {
     if (e.dead || e.hp >= e.max || S.t - (e.lastHurt ?? -99) < 3) continue;
@@ -1113,6 +1135,7 @@ function physics(e, dt) {
   if (Math.abs(vx) + Math.abs(vy) > 0.1) {
     e.walk += dt * 10; if (Math.abs(vx) > 0.1 && Math.abs(e.kbx) < 0.5) e.dir = vx > 0 ? 1 : -1;
   } else e.walk = 0;
+  if (tileAt(e.x, e.y) === 10) { vx = e.kbx + e.vx * 0.5; vy = e.kby + e.vy * 0.5; }
   let nx = e.x + vx * dt, ny = e.y + vy * dt;
   // Spieler: Auto-Bridge über dem Void
   if (e === S.player && S.void && Math.abs(e.kbx) + Math.abs(e.kby) < 1) {
@@ -1151,7 +1174,7 @@ function endGame(win) {
       ? `Gehusstled! Vom Meister? Ja, diesmal ${me.name}!`
       : ['Schade ' + me.name + ',\nnächstes Mal dir :)', 'Vom Meister?\nNein sry, wieder nicht ' + me.name, 'Die Folge war eher\nungehusstled als gehusstled.'][(Math.random() * 3) | 0];
     $('overStats').innerHTML = `
-      Map: <b>${S.mapDef.name}</b><br>
+      ${S.mode.ico} <b>${S.mode.name}</b> auf <b>${S.mapDef.name}</b><br>
       Kills: <b>${S.kills}</b> · Tode: <b>${S.deaths}</b><br>
       Betten zerstört: <b>${S.bedsBroken}/${S.enemyTeams.length}</b><br>
       Ins Void gefallen: <b>${S.fallsP}×</b> · Alles verloren: <b>${S.lost}×</b><br>
@@ -1162,7 +1185,7 @@ function endGame(win) {
     $('over').classList.remove('hidden');
   }, 1300);
 }
-$('again').addEventListener('click', () => (K ? startKick(selectedChar) : startGame(selectedChar)));
+$('again').addEventListener('click', () => (K ? startKick(selectedChar) : startGame(selectedChar, selectedMap, selectedMode)));
 $('toMenu').addEventListener('click', () => { if (K) { exitKick(); return; } $('over').classList.add('hidden'); showMenu(); });
 
 // ---------- Rendering ----------
@@ -1172,8 +1195,8 @@ const clouds = Array.from({ length: 14 }, () => ({ x: Math.random() * MW * T, y:
 function render() {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   const grd = ctx.createLinearGradient(0, 0, 0, cv.height);
-  if (S && !S.void) { grd.addColorStop(0, '#2f6b28'); grd.addColorStop(1, '#244f20'); }
-  else { grd.addColorStop(0, '#7fb6ea'); grd.addColorStop(1, '#bfe0fb'); }
+  const bg = S ? S.theme.bg : ['#7fb6ea', '#bfe0fb'];
+  grd.addColorStop(0, bg[0]); grd.addColorStop(1, bg[1]);
   ctx.fillStyle = grd; ctx.fillRect(0, 0, cv.width, cv.height);
   if (!S) return;
   const p = S.player;
@@ -1183,7 +1206,7 @@ function render() {
   let sx = 0, sy = 0; if (S.shake > 0) { sx = (Math.random() - 0.5) * 10 * S.shake; sy = (Math.random() - 0.5) * 10 * S.shake; }
   ctx.setTransform(sc, 0, 0, sc, Math.round(cv.width / 2 - cam.x * sc + sx), Math.round(cv.height / 2 - cam.y * sc + sy));
   ctx.imageSmoothingEnabled = false;
-  if (S.void) {
+  if (S.theme.clouds) {
     ctx.fillStyle = 'rgba(255,255,255,.55)';
     for (const c of clouds) {
       c.x += c.s * 0.016; if (c.x > MW * T + 200) c.x = -200;
@@ -1197,7 +1220,7 @@ function render() {
   for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
     const t = S.map[y * MW + x]; if (!t) continue;
     if (!tileAt(x, y + 1) && S.void) {
-      ctx.fillStyle = t === 2 || t === 7 ? '#bda968' : t === 5 ? '#c3c38a' : t === 3 ? '#666' : '#7a5230';
+      ctx.fillStyle = t === 2 || t === 7 || t === 15 ? '#bda968' : t === 5 ? '#c3c38a' : t === 3 ? '#666' : t === 12 ? '#d9a800' : t === 13 || t === 11 ? '#4a1515' : t === 10 ? '#1d6aa5' : '#7a5230';
       ctx.fillRect(x * T, (y + 1) * T, T, 12);
       ctx.fillStyle = 'rgba(0,0,0,.15)'; ctx.fillRect(x * T, (y + 1) * T + 12, T, 8);
     }
@@ -1205,7 +1228,9 @@ function render() {
   // Böden
   for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
     const t = S.map[y * MW + x]; if (!t) continue;
-    ctx.drawImage(tileTex[isWall(t) ? (t === 7 ? (S.under[y * MW + x] || 2) : t === 6 ? 4 : 1) : t], x * T, y * T, T, T);
+    ctx.drawImage(tileTex[isWall(t) ? (t === 7 ? (S.under[y * MW + x] || 2) : t === 6 ? 4 : t === 15 ? 2 : 1) : t], x * T, y * T, T, T);
+    if (t === 11) { ctx.fillStyle = `rgba(255,220,80,${0.15 + 0.15 * Math.sin(S.t * 3 + x * 0.7 + y * 0.4)})`; ctx.fillRect(x * T, y * T, T, T); }
+    if (t === 10) { ctx.fillStyle = `rgba(255,255,255,${0.08 + 0.06 * Math.sin(S.t * 2 + x + y * 0.5)})`; ctx.fillRect(x * T, y * T + 10, T, 3); }
   }
   // Border-Linie
   if (S.border) {
@@ -1283,6 +1308,14 @@ function render() {
 }
 function drawWall(x, y, t) {
   const h = 14, px = x * T, py = y * T;
+  if (t === 15) { // Palme
+    ctx.fillStyle = '#8a5a2b'; ctx.fillRect(px + 13, py - 10, 6, T + 4);
+    ctx.fillStyle = '#3b9c33';
+    ctx.fillRect(px - 6, py - 20, 22, 6); ctx.fillRect(px + 16, py - 20, 22, 6); ctx.fillRect(px + 6, py - 28, 20, 8);
+    ctx.fillStyle = '#2f7a2a'; ctx.fillRect(px - 4, py - 14, 6, 6); ctx.fillRect(px + 30, py - 14, 6, 6);
+    ctx.fillStyle = '#8a5a2b'; ctx.fillRect(px + 12, py - 16, 4, 4); ctx.fillRect(px + 17, py - 15, 4, 4);
+    return;
+  }
   if (t === 9) { // Baum
     ctx.fillStyle = '#5a3a1a'; ctx.fillRect(px + 12, py + 8, 8, T - 8);
     ctx.fillStyle = '#2f7a2a'; ctx.fillRect(px - 2, py - 18, T + 4, 28);
@@ -1397,23 +1430,13 @@ function drawArrows(sc) {
 }
 
 // ---------- Menü ----------
-function renderMaps() {
-  const box = $('maps'); box.innerHTML = '';
-  for (const id of MAP_ORDER) {
-    const m = MAPS[id];
-    const d = document.createElement('div'); d.className = 'mapCard' + (id === selectedMap ? ' sel' : '');
-    d.innerHTML = `<div class="mn">${m.name}</div><div class="me">${m.ep}</div><div class="md">${m.desc}</div>`;
-    d.addEventListener('click', () => { selectedMap = id; localStorage.setItem('exe_map', id); renderMaps(); });
-    box.appendChild(d);
-  }
-}
 function showMenu() {
   S = null; K = null;
   $('hud').classList.add('hidden'); $('menu').classList.remove('hidden');
   $('episode').textContent = '#' + episode;
   $('tip').textContent = TIPS[(Math.random() * TIPS.length) | 0];
   $('hs').textContent = best.wins || best.kills ? `Siege: ${best.wins} · Rekord-Kills: ${best.kills}` : '';
-  renderMaps();
+  renderMenuSelect();
   const box = $('chars'); box.innerHTML = '';
   for (const k of ['leon', 'moritz']) {
     const c = CHARS[k];
@@ -1422,7 +1445,7 @@ function showMenu() {
     pv.getContext('2d').drawImage(makeSprite(SKINS[c.skin], 0), 0, 0);
     d.appendChild(pv);
     d.insertAdjacentHTML('beforeend', `<div class="n">${c.name}</div><div class="ign">${c.ign}</div><div class="perk">${c.perk}</div>`);
-    d.addEventListener('click', () => { initAudio(); startGame(k); });
+    d.addEventListener('click', () => { initAudio(); startGame(k, selectedMap, selectedMode); });
     box.appendChild(d);
   }
 }
@@ -1450,7 +1473,10 @@ let last = performance.now();
 function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   if (K) { if (!K.done) kickUpdate(dt); kickRender(); }
-  else { if (S && $('shop').classList.contains('hidden')) update(dt); render(); }
+  else {
+    if (S && $('shop').classList.contains('hidden')) update(dt);
+    if (!S && !$('menu').classList.contains('hidden')) previewTick(dt); else render();
+  }
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

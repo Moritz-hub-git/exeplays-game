@@ -104,13 +104,6 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; i
 .kickBtn { width: 46%; margin: 8px 1% 0; font-size: 13px; padding: 8px; }
 #kickExit { position: fixed; top: calc(env(safe-area-inset-top) + 8px); right: 8px; width: 44px; height: 44px; margin: 0; padding: 0; z-index: 4; font-size: 18px; }
 
-#maps { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-width: 340px; margin-bottom: 6px; }
-.mapCard { background: rgba(0,0,0,.45); border: 3px solid #1b1b1b; padding: 7px 6px; text-align: left; cursor: pointer; }
-.mapCard.sel { border-color: #4ccf3f; box-shadow: 0 0 0 2px #4ccf3f inset; background: rgba(20,70,20,.6); }
-.mapCard .mn { font-weight: bold; font-size: 14px; }
-.mapCard .me { color: #ffd83a; font-size: 10px; }
-.mapCard .md { font-size: 10.5px; line-height: 1.3; margin-top: 4px; color: #e6ffe0; }
-.gear { font-size: 9px; }
 
 #board .pg { font-size: 9.5px; color: #d7ffd0; border-top: 1px solid rgba(255,255,255,.2); margin-top: 2px; padding-top: 2px; }
 
@@ -124,3 +117,29 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; i
 .uinv { color: #fff; }
 .uact { color: #d7ffd0; }
 .uplan .ok { color: #9f9; } .uplan .no { color: #fbb; }
+
+/* --- Menü: Modus-Chips und Map-Slider --- */
+.sect { margin: 14px 0 6px; font-weight: bold; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; text-shadow: 2px 2px 0 #333; }
+.sect span { text-transform: none; letter-spacing: 0; font-weight: normal; font-size: 11px; color: #e6ffe0; }
+#modes { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; max-width: 380px; }
+.modeChip { font: bold 13px ui-monospace, monospace; color: #fff; text-shadow: 1px 1px 0 #333; background: #6f6f6f; border: 3px solid #1b1b1b;
+  box-shadow: inset -3px -3px 0 #4a4a4a, inset 3px 3px 0 #9a9a9a; padding: 7px 10px; cursor: pointer; }
+.modeChip span { margin-right: 5px; }
+.modeChip.on { background: #3f9a35; box-shadow: inset -3px -3px 0 #2a6a23, inset 3px 3px 0 #6fd35f; }
+.modeDesc, .mapDesc { font-size: 11.5px; max-width: 340px; margin: 6px auto 0; line-height: 1.35; background: rgba(0,0,0,.35); padding: 5px 9px; min-height: 30px; }
+#mapStage { position: relative; width: min(360px, 92vw); height: min(220px, 56vw); border: 3px solid #1b1b1b; box-shadow: 0 6px 0 rgba(0,0,0,.25), inset 0 0 0 2px rgba(255,255,255,.25); overflow: hidden; touch-action: pan-y; }
+#mapCanvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: auto; }
+.arrow { position: absolute; top: 50%; transform: translateY(-50%); width: 40px; height: 54px; font-size: 20px; color: #fff; background: rgba(0,0,0,.45);
+  border: 2px solid rgba(255,255,255,.4); cursor: pointer; padding: 0; }
+.arrow:active { background: rgba(60,160,50,.7); }
+.arrow.left { left: 6px; } .arrow.right { right: 6px; }
+.mapInfo { position: absolute; left: 0; right: 0; bottom: 0; padding: 4px 8px 6px; background: linear-gradient(transparent, rgba(0,0,0,.65)); text-align: left; pointer-events: none; }
+#mapName { font-size: 20px; font-weight: 900; font-family: Impact, "Arial Black", sans-serif; letter-spacing: .5px; text-shadow: 2px 2px 0 #000; }
+#mapEp { font-size: 11px; color: #ffd83a; text-shadow: 1px 1px 0 #000; }
+#mapDots { display: flex; gap: 6px; justify-content: center; margin-top: 8px; }
+#mapDots i { width: 8px; height: 8px; background: rgba(255,255,255,.4); border: 1px solid #1b1b1b; }
+#mapDots i.on { background: #4ccf3f; transform: scale(1.3); }
+#chars .char { width: 140px; padding: 8px 6px 10px; }
+#chars .char canvas { width: 54px; height: 90px; }
+#menu { overflow-x: hidden; }
+#menu > * { flex-shrink: 0; }
