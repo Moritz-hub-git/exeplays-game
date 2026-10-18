@@ -464,6 +464,21 @@ function nearestWalkable(x, y, maxR = 3) {
   }
   return { x, y };
 }
+function inRing(k, x, y) { const b = S.beds[k]; const cx = Math.floor(x), cy = Math.floor(y); return Math.abs(cx - b.x) <= 1 && cy >= b.y - 1 && cy <= b.y + 2; }
+// Bett nur treffbar, wenn man direkt daneben steht (also im Ring-Bereich, wo keine Mauer ist)
+function canHitBed(u, k) {
+  const b = S.beds[k]; if (!b.alive || !inRing(k, u.x, u.y)) return false;
+  return Math.hypot(u.x - (b.x + 0.5), u.y - (b.y + 1)) < 2.1;
+}
+// Spawn-Platz vor der Bett-Burg, nie im Ring
+function spawnPoint(k) {
+  const b = S.beds[k], bx = b.x + 0.5, by = b.y + 1, a = Math.atan2(S.C + 0.5 - by, S.C + 0.5 - bx);
+  for (let r = 0; r <= 3; r += 0.5) for (let i = 0; i < 16; i++) {
+    const x = bx + Math.cos(a) * 2.9 + Math.cos(i / 16 * Math.PI * 2) * r, y = by + Math.sin(a) * 2.9 + Math.sin(i / 16 * Math.PI * 2) * r;
+    if (walkable(tileAt(x, y)) && !bedAt(x, y) && !inRing(k, x, y)) return { x: Math.floor(x) + 0.5, y: Math.floor(y) + 0.5 };
+  }
+  return bedFront(k, 2.9);
+}
 function setupTeams() {
   S.dealers = {}; S.roster = {}; S.respawnQ = []; S.bedAlert = {};
   for (const k of S.allTeams) {
@@ -477,7 +492,7 @@ function setupTeams() {
     S.dealers[k] = { x: d.x, y: d.y, team: k };
     if (k === 'gruen') {
       S.shopNpc = S.dealers.gruen;
-      const sp = nearestWalkable(bx + Math.cos(a) * 1.9, by + Math.sin(a) * 1.9);
+      const sp = spawnPoint('gruen');
       S.spawn = { x: sp.x, y: sp.y };
       continue;
     }
@@ -492,7 +507,7 @@ function teamGear(k) {
 function mkEnemy(team) {
   const st = S.ai.strength, hp = Math.round(14 * st + S.wave);
   const skinKey = 'en_' + team + '_' + ((Math.random() * 4) | 0);
-  const f = bedFront(team);
+  const f = spawnPoint(team);
   const u = { kind: 'enemy', team, name: NAMES[(Math.random() * NAMES.length) | 0], x: f.x + (Math.random() - 0.5) * 0.4, y: f.y + (Math.random() - 0.5) * 0.4,
     vx: 0, vy: 0, hp, max: hp, dir: 1, sprites: spritesFor(skinKey, enemySkin(team)), atkCd: 1, hurtT: 0, walk: 0, dead: false,
     fallT: 0, kbx: 0, kby: 0, buildT: 0, breakT: 0, speed: 1.9 + Math.random() * 0.4, bubble: null, bubbleT: 0,
@@ -732,7 +747,7 @@ function enemyAI(e, dt) {
   if (e.state === 'push' && !e.goal && e.targetTeam) {
     const tk = e.targetTeam, bed = S.beds[tk];
     if (!bed.alive) { e.thinkT = 0; e.vx = e.vy = 0; return; }
-    if (Math.hypot(e.x - (bed.x + 0.5), e.y - (bed.y + 1)) < 1.6) {
+    if (canHitBed(e, tk)) {
       e.vx = e.vy = 0; if (e.atkCd <= 0) { e.atkCd = 0.9; e.swing = 0.18; hitBed(tk, 2 + e.sword, e); } return;
     }
     return followField(e, fieldTo(bedSources(tk), 'bed_' + tk, 3), dt);
@@ -955,8 +970,7 @@ function attack(a) {
   for (const k in S.beds) {
     const b = S.beds[k];
     if (!b.alive || k === a.team) continue;
-    const d = Math.hypot(a.x - (b.x + 0.5), a.y - (b.y + 1));
-    if (d < 1.9) {
+    if (canHitBed(a, k)) {
       a.atkCd = a.kind === 'hero' ? 0.45 : 0.9; a.swing = 0.18;
       hitBed(k, a.kind === 'hero' ? 2 + Math.floor(S.sword / 2) : 2, a);
       return true;
@@ -1045,8 +1059,7 @@ function mineFloor(x, y, amount, by) {
 // Ring um das Bett: alle Nachbarfelder der beiden Bettfelder, die frei begehbar sind (Tür am Spawn bleibt offen)
 function ringGaps(k) {
   const b = S.beds[k]; if (!b.alive) return [];
-  const sp = k === 'gruen' ? S.spawn : bedFront(k, 1.8);
-  const keep = new Set([Math.floor(sp.y) * MW + Math.floor(sp.x)]);
+  const keep = new Set();
   const d = S.dealers[k]; if (d) keep.add(Math.floor(d.y) * MW + Math.floor(d.x));
   for (const g of S.gens) if (g.team === k) keep.add(Math.floor(g.y) * MW + Math.floor(g.x));
   const out = [];
@@ -1281,7 +1294,7 @@ function physics(e, dt) {
       e.respawnT -= dt;
       if (e.respawnT <= 0 && !S.beds.gruen.alive && e.isPlayer) { endGame(false); return; }
       if (e.respawnT <= 0 && S.beds.gruen.alive && !S.over) {
-        e.dead = false; e.hp = e.max; e.fallT = 0; e.x = S.spawn.x + (e.isPlayer ? 0 : 1); e.y = S.spawn.y; e.kbx = e.kby = 0;
+        e.dead = false; e.hp = e.max; e.fallT = 0; e.x = S.spawn.x + (e.isPlayer ? 0 : 0.35); e.y = S.spawn.y; e.kbx = e.kby = 0;
         if (e.isPlayer) caption('Respawn!\nMit leeren Taschen.', -5, 0.3, 0.3);
       }
     }
