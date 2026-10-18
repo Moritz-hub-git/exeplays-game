@@ -340,6 +340,7 @@ window.addEventListener('keydown', e => {
   if (e.key === ' ') { input.hit = true; e.preventDefault(); }
   if (k === 'q' || k === 'f') input.build = true;
   if (k === 'e' && S && !S.over) { $('shop').classList.contains('hidden') ? openShop() : closeShop(); }
+  if (e.key === 'Escape' && !$('shop').classList.contains('hidden')) { closeShop(); e.preventDefault(); }
 });
 window.addEventListener('keyup', e => {
   const k = e.key.toLowerCase(); input.keys[k] = false;
