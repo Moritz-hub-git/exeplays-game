@@ -419,7 +419,7 @@ function renderShop() {
   const box = $('shopItems'); box.innerHTML = '';
   SHOP.forEach(it => {
     const p = val(it.price); const ok = canPay(p);
-    const d = document.createElement('div'); d.className = 'item' + (ok ? '' : ' no');
+    const d = document.createElement('div'); d.className = 'item' + (ok ? '' : ' no'); d._it = it;
     d.innerHTML = `<div class="ic">${it.ic}</div><div class="tx"><b>${val(it.name)}</b><br>${val(it.desc)}</div><div class="pr">${priceStr(p)}</div>`;
     d.addEventListener('click', () => {
       const p2 = val(it.price);
@@ -429,6 +429,16 @@ function renderShop() {
     });
     box.appendChild(d);
   });
+  $('shopInv').textContent = `${S.inv.bronze} Bronze · ${S.inv.iron} Eisen · ${S.inv.gold} Gold · ${S.inv.sand} Sandstein · ${SWORDS[S.sword].name}`;
+}
+// nur Verfügbarkeit, Namen und Preise aktualisieren (Einträge bleiben, damit kein Tipp verloren geht)
+function refreshShop() {
+  for (const d of $('shopItems').children) {
+    const it = d._it, p = val(it.price);
+    d.classList.toggle('no', !canPay(p));
+    d.querySelector('.pr').textContent = priceStr(p);
+    d.querySelector('.tx b').textContent = val(it.name);
+  }
   $('shopInv').textContent = `${S.inv.bronze} Bronze · ${S.inv.iron} Eisen · ${S.inv.gold} Gold · ${S.inv.sand} Sandstein · ${SWORDS[S.sword].name}`;
 }
 function tnt() {
@@ -528,12 +538,13 @@ function missing(p, inv) { const m = {}; for (const k in p) if ((inv[k] || 0) < 
 function tryShop(u, dt) {
   const dl = S.dealers[u.team];
   if (!dl || dist(u, dl) > 2.4) { u.buyT = 0; u.buying = null; return false; }
+  if (S.t - (u.lastHurt ?? -99) < 0.4) { u.buying = null; u.buyT = 0; u.thinkT = 0; return false; }  // getroffen: Kauf abbrechen
   const w = u.buying || shopWish(u);
   if (!w) { u.buying = null; return false; }
   u.vx = u.vy = 0; u.dir = dl.x >= u.x ? 1 : -1;
   if (!u.buying) { u.buying = w; u.buyT = 0; dl.talkT = 1.3; }
   u.buyT += dt;
-  if (u.buyT < 1.0) return true;
+  if (u.buyT < 0.7) return true;
   u.buying = null; u.buyT = 0;
   if (!canPay(w.p, u.inv)) return true;
   pay(w.p, u.inv); w.f();
@@ -1233,6 +1244,10 @@ function update(dt) {
   S.floats = S.floats.filter(f => f.t > 0);
   S.shake = Math.max(0, S.shake - dt);
   $('shopHint').classList.toggle('hidden', !nearShop());
+  if (!$('shop').classList.contains('hidden')) {
+    if (!nearShop() || p.dead) closeShop();
+    else if ((S.shopRefresh = (S.shopRefresh || 0) - dt) <= 0) { S.shopRefresh = 0.4; refreshShop(); }
+  }
   // Sieg?
   if (!S.over && S.enemyTeams.every(k => !S.beds[k].alive) && !S.ents.some(e => e.kind === 'enemy' && !e.dead)) endGame(true);
   updateHud();
@@ -1644,7 +1659,7 @@ function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   if (K) { if (!K.done) kickUpdate(dt); kickRender(); }
   else {
-    if (S && $('shop').classList.contains('hidden')) update(dt);
+    if (S) update(dt);
     if (!S && !$('menu').classList.contains('hidden')) previewTick(dt); else render();
   }
   requestAnimationFrame(loop);
