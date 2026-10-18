@@ -204,7 +204,7 @@ function startGame(charKey, mapId = selectedMap, modeId = selectedMode) {
   const beds = {};
   for (const k in G.beds) { const b = G.beds[k]; beds[k] = { x: b.x, y: b.y, hp: b.hp, max: b.hp, alive: true }; }
   S = {
-    t: 0, mapId, modeId, mapDef: def, mode, theme: def.theme, map: G.map, under: new Uint8Array(MW * MH), mapVer: 0, C: G.C, void: G.void,
+    t: 0, mapId, modeId, mapDef: def, mode, theme: def.theme, map: G.map, under: new Uint8Array(MW * MH), placed: new Uint8Array(MW * MH), skipGap: {}, mapVer: 0, C: G.C, void: G.void,
     enemyTeams: G.enemyTeams, allTeams: G.teams, ai: mode.ai, genMul: G.genMul, border: G.border ? { ...G.border, r: G.border.r0, tick: 0 } : null,
     beds, spawn: { x: 0, y: 0 }, shopNpc: null,
     gens: G.gens.map(([x, y, kind, every, cap]) => ({ x, y, kind, every: every * G.genMul, cap, t: Math.random() * every, team: null })),
@@ -493,24 +493,35 @@ function mkEnemy(team) {
 }
 // nächster sinnvoller Einkauf (Blöcke, Schwert, Rüstung, Bogen)
 // Einkaufsplan: gleiche Preise wie im Shop des Spielers
-function planNext(u) {
-  if (S.void && u.inv.sand < 24) return { p: { bronze: 4 }, f: () => (u.inv.sand += 16), n: '16 Blöcke', ic: '🧱', quiet: true };
-  if (u.sword < 3 && !(u === S.partner && u.sword >= 2)) { const nm = SWORDS[u.sword + 1].name; return { p: SWORD_PRICES[u.sword], f: () => u.sword++, n: nm, ic: '⚔️' }; }
-  if (!u.armor) return { p: { iron: 10 }, f: () => (u.armor = 1), n: 'Kettenrüstung', ic: '🛡️' };
-  if (u.kind === 'enemy' && !u.bow && S.t >= S.ai.bowAfter) return { p: { gold: 3 }, f: () => (u.bow = 1), n: 'Bogen', ic: '🏹' };
-  return null;
+function sandPlan(u) { return { key: 'sand', p: { bronze: 4 }, f: () => (u.inv.sand += 16), n: '16 Blöcke', ic: '🧱', quiet: true }; }
+function upgradeOptions(u) {
+  const o = [];
+  if (u.sword < 3 && !(u === S.partner && u.sword >= 2)) o.push({ key: 'sword', p: SWORD_PRICES[u.sword], f: () => u.sword++, n: SWORDS[u.sword + 1].name, ic: '⚔️' });
+  if (!u.armor) o.push({ key: 'armor', p: { iron: 10 }, f: () => (u.armor = 1), n: 'Kettenrüstung', ic: '🛡️' });
+  if (!u.bow && S.t >= S.ai.bowAfter) o.push({ key: 'bow', p: { gold: 3 }, f: () => (u.bow = 1), n: 'Bogen', ic: '🏹' });
+  if (u === S.partner && !S.partnerBedUp && S.beds.gruen.alive)
+    o.push({ key: 'bed', p: { iron: 6 }, f: () => { const b = S.beds.gruen; b.max += 40; b.hp += 40; S.partnerBedUp = true; caption('Bett-Schutz\nvon ' + u.name + '!', -6); }, n: 'Bett-Schutz fürs Team', ic: '🛏️' });
+  return o;
 }
-// nächster Kauf, den die Einheit sich JETZT leisten kann
+// Plan: dringend Blöcke, sonst der persönliche Wunsch (gewichtet zufällig), sonst Blöcke auffüllen
+function planNext(u) {
+  const sandLow = S.void ? 8 : 4, sandFull = S.void ? 24 : 12;
+  if (u.inv.sand < sandLow) return sandPlan(u);
+  const ups = upgradeOptions(u);
+  if (!u.prefs) u.prefs = { sword: 0.6 + Math.random(), armor: 0.4 + Math.random(), bow: 0.3 + Math.random(), bed: 0.5 + Math.random() };
+  if (u.wishKey && (!ups.some(o => o.key === u.wishKey) || S.t - u.wishSince > 35)) u.wishKey = null;
+  if (!u.wishKey && ups.length) {
+    let r = Math.random() * ups.reduce((a, o) => a + u.prefs[o.key], 0);
+    for (const o of ups) { r -= u.prefs[o.key]; if (r <= 0) { u.wishKey = o.key; break; } }
+    u.wishKey = u.wishKey || ups[0].key; u.wishSince = S.t; u.wishSaid = false;
+  }
+  const w = ups.find(o => o.key === u.wishKey);
+  if (u.inv.sand < sandFull && (!w || !canPay(w.p, u.inv))) return sandPlan(u);
+  return w || null;
+}
 function shopWish(u) {
   const plan = planNext(u);
-  if (plan && canPay(plan.p, u.inv)) return plan;
-  // Blöcke sind voll genug? Dann ggf. das nächste leistbare Upgrade
-  if (plan && plan.ic === '🧱' && u.inv.sand >= 8) {
-    const sw = u.sword < 3 && !(u === S.partner && u.sword >= 2) ? { p: SWORD_PRICES[u.sword], f: () => u.sword++, n: SWORDS[u.sword + 1].name, ic: '⚔️' } : null;
-    if (sw && canPay(sw.p, u.inv)) return sw;
-    if (!u.armor && u.inv.iron >= 10) return { p: { iron: 10 }, f: () => (u.armor = 1), n: 'Kettenrüstung', ic: '🛡️' };
-  }
-  return null;
+  return plan && canPay(plan.p, u.inv) ? plan : null;
 }
 function missing(p, inv) { const m = {}; for (const k in p) if ((inv[k] || 0) < p[k]) m[k] = p[k] - (inv[k] || 0); return m; }
 // Einkaufen dauert sichtbar: Einheit bleibt stehen, sagt was sie kauft, Ressourcen fliegen zum Dealer
@@ -520,7 +531,7 @@ function tryShop(u, dt) {
   const w = u.buying || shopWish(u);
   if (!w) { u.buying = null; return false; }
   u.vx = u.vy = 0; u.dir = dl.x >= u.x ? 1 : -1;
-  if (!u.buying) { u.buying = w; u.buyT = 0; dl.talkT = 1.3; if (u.kind === 'hero') say(u, `Kaufe ${w.n} für ${priceStr(w.p)}`, 1.3); }
+  if (!u.buying) { u.buying = w; u.buyT = 0; dl.talkT = 1.3; }
   u.buyT += dt;
   if (u.buyT < 1.0) return true;
   u.buying = null; u.buyT = 0;
@@ -532,7 +543,8 @@ function tryShop(u, dt) {
   floatText(u.x, u.y - 2.1, u.kind === 'hero' ? `${w.ic} ${w.n}` : '🛒', col);
   if (!w.quiet && u.kind === 'hero') {
     feed(`<span class="tag">[Shop]</span> <b style="color:${col}">${u.name}</b> kauft ${w.n} (${priceStr(w.p)}).`);
-    if (u.kind === 'hero' && Math.random() < 0.5) setTimeout(() => say(u, `Ich hab mir ${w.n} gegönnt!`), 300);
+    if (u.kind === 'hero') setTimeout(() => say(u, `${w.n} gekauft!`), 200);
+    if (u.wishKey === w.key) u.wishKey = null;
   }
   return true;
 }
@@ -561,7 +573,7 @@ function flankPoint(u) {
 
 // Gegner entscheidet laufend, was in der aktuellen Lage am meisten Sinn ergibt (keine festen Rollen)
 function enemyThink(u) {
-  const k = u.team, bed = S.beds[k], home = bedFront(k, 1.6);
+  const k = u.team, bed = S.beds[k], home = bedFront(k, 2.6);
   const hostiles = hostilesOf(u);
   let tgt = null, td = Infinity;
   for (const h of hostiles) { const d = dist(h, u); if (d < td) { td = d; tgt = h; } }
@@ -638,6 +650,15 @@ function choosePlan(u, mates, home) {
     const nearBase = dist(p, home) < 12;
     opts.push({ act: 'hunt', s: (nearBase ? 1.8 : 0) + (teamPower(u) > pPow ? 1.2 : -0.5) + (!S.beds.gruen.alive ? 2.5 : 0) - dist(u, p) / 25 + noise() });
   }
+  // Bett einbauen, wenn Lücken im Ring sind und Blöcke übrig
+  if (S.beds[k].alive) {
+    const gaps = ringGaps(k).length, spare = u.inv.sand - needSand;
+    if (gaps && spare >= 4 && !(u.noBuildUntil > S.t)) opts.push({ act: 'fortify', s: 1.2 + gaps * 0.1 + ((S.bedAlert[k] ?? -99) > S.t - 20 ? 1 : 0) + noise() });
+    // Brücke abschneiden, wenn jemand über eine gebaute Brücke auf die Basis zukommt
+    if (S.void && hostilesOf(u).some(h => S.placed[Math.floor(h.y) * MW + Math.floor(h.x)] && dist(h, home) < 11)) {
+      const be = bridgeEntry(k, home); if (be) opts.push({ act: 'cut', cut: be, s: 2.6 + noise() });
+    }
+  }
   // Zuhause aufpassen, wenn sonst niemand da ist
   if (S.beds[k].alive) {
     const atHome = mates.filter(m => dist(m, home) < 6).length;
@@ -646,11 +667,15 @@ function choosePlan(u, mates, home) {
   opts.sort((a, b) => b.s - a.s);
   const best = opts[0];
   u.plan = { ...best, until: S.t + 6 + Math.random() * 6 };
+  if (best.act === 'cut') u.cut = best.cut;
+  if (best.act === 'fortify' && Math.random() < 0.3) say(u, ['Ich bau das Bett ein!', 'Bett einbauen!', 'Mauer drum, dann ist Ruhe.'][(Math.random() * 3) | 0]);
   if (best.act !== 'attack') { u.pushing = false; u.rallyUntil = 0; u.wp = null; }
   else u.targetTeam = best.team;
 }
 function runPlan(u, tgt, mates, home) {
   const k = u.team, act = u.plan.act;
+  if (act === 'fortify') { u.state = 'build'; return; }
+  if (act === 'cut') { u.state = 'cut'; return; }
   if (act !== 'farm') u.farmTime = 0;
   if (act === 'farm') {
     u.farmTime = (u.farmTime || 0) + 0.5;
@@ -690,6 +715,9 @@ function enemyAI(e, dt) {
   if (e.thinkT <= 0) { e.thinkT = 0.35 + Math.random() * 0.3; enemyThink(e); }
   if (e.state === 'shop') { if (tryShop(e, dt)) return; e.thinkT = Math.min(e.thinkT, 0.1); }
   if (e.state === 'fight' && e.target && !e.target.dead) return combat(e, e.target, dt);
+  if (e.state === 'build') { if (tryFortify(e, dt)) return; e.plan = null; e.thinkT = 0; }
+  if (e.state === 'cut') { if (tryCut(e, dt)) return; e.plan = null; e.thinkT = 0; }
+  if (e.state === 'retreat') blockBehind(e, dt);
   if (e.state === 'push' && !e.goal && e.targetTeam) {
     const tk = e.targetTeam, bed = S.beds[tk];
     if (!bed.alive) { e.thinkT = 0; e.vx = e.vy = 0; return; }
@@ -755,13 +783,13 @@ function followField(e, d, dt) {
     const cx = Math.floor(e.x) + 0.5, cy = Math.floor(e.y) + 0.5;
     if (Math.hypot(e.x - cx, e.y - cy) > 0.25) { moveToward(e, cx, cy, e.speed); return; }
     e.vx = e.vy = 0; e.buildT += dt;
-    if (e.buildT > 0.4) { e.buildT = 0; setTile(n.x, n.y, 2); e.inv.sand--; if (Math.random() < 0.3) sfx.place(); }
+    if (e.buildT > 0.4) { e.buildT = 0; setTile(n.x, n.y, 2); S.placed[n.y * MW + n.x] = 1; e.inv.sand--; if (Math.random() < 0.3) sfx.place(); }
     return;
   }
   if (isWall(t)) {
     if (!breakable(t)) { e.vx = e.vy = 0; return; }
     e.vx = e.vy = 0; e.breakT += dt;
-    if (e.breakT > 0.5) { e.breakT = 0; e.swing = 0.18; chipWall(n.x, n.y, 0.3 + e.sword * 0.08); if (Math.random() < 0.04) say(e, 'Mach die Mauer weg!!'); }
+    if (e.breakT > 0.5) { e.breakT = 0; e.swing = 0.18; chipWall(n.x, n.y, 0.3 + e.sword * 0.08, e); if (Math.random() < 0.04) say(e, 'Mach die Mauer weg!!'); }
     return;
   }
   e.breakT = 0;
@@ -774,7 +802,7 @@ function moveToward(a, gx, gy, sp) {
 
 // Partner: verteidigt, kauft sich selbst Ausrüstung, begleitet Angriffe, zieht sich zum Heilen zurück
 function partnerThink(a) {
-  const bed = S.beds.gruen, p = S.player, home = bed.alive ? bedFront('gruen', 1.4) : null;
+  const bed = S.beds.gruen, p = S.player, home = bed.alive ? bedFront('gruen', 2.6) : null;
   a.target = null;
   const enemies = S.ents.filter(e => e.kind === 'enemy' && !e.dead && e.fallT <= 0 && walkable(tileAt(e.x, e.y)));
   const nearest = (o, r) => { let b = null, bd = r; for (const e of enemies) { const d = dist(e, o); if (d < bd) { bd = d; b = e; } } return b; };
@@ -786,7 +814,40 @@ function partnerThink(a) {
   const intruder = bed.alive ? nearest({ x: bed.x + 0.5, y: bed.y + 1 }, 7) : null;
   if (intruder) { a.state = 'fight'; a.target = intruder; return; }
   const close = nearest(a, 4.5); if (close) { a.state = 'fight'; a.target = close; return; }
-  if (bed.alive && shopWish(a) && dist(a, S.shopNpc) < 10) { a.state = 'shop'; a.goal = S.shopNpc; return; }
+  // Brücke abschneiden, wenn ein Gegner über eine gebaute Brücke kommt
+  if (bed.alive && S.void) {
+    const onBridge = enemies.find(e => S.placed[Math.floor(e.y) * MW + Math.floor(e.x)] && dist(e, home) < 11);
+    if (onBridge) { const be = bridgeEntry('gruen', home); if (be) { if (a.state !== 'cut') say(a, 'Da kommt einer über die Brücke, ich hau sie weg!'); a.cut = be; a.state = 'cut'; return; } }
+  }
+  // Einkaufen: vorher ansagen, was und warum
+  const wish = bed.alive ? shopWish(a) : null;
+  if (wish && dist(a, S.shopNpc) < 10) {
+    if (a.state !== 'shop') say(a, wish.key === 'sand' ? `Ich hol mir noch Blöcke (${priceStr(wish.p)})` : `Ich kauf mir ${wish.n} für ${priceStr(wish.p)}!`, 2.4);
+    a.state = 'shop'; a.goal = S.shopNpc; return;
+  }
+  // Überschuss an den Spieler abgeben statt horten
+  if (!p.dead && dist(a, p) < 3.5 && S.t - (a.giftT || -99) > 15) {
+    const plan = planNext(a), need = plan ? plan.p : {};
+    const give = { bronze: Math.max(0, a.inv.bronze - Math.max(12, need.bronze || 0)), iron: Math.max(0, a.inv.iron - Math.max(need.iron || 0, a.armor ? 0 : 10)), gold: Math.max(0, a.inv.gold - (need.gold || 0)) };
+    if (give.bronze >= 8 || give.iron >= 3 || give.gold >= 1) {
+      for (const r in give) { a.inv[r] -= give[r]; S.inv[r] += give[r]; for (let n = 0; n < Math.min(give[r], 6); n++) S.flyers.push({ x: a.x, y: a.y - 0.7, to: p, t: -n * 0.05, d: 0.4, kind: r }); }
+      a.giftT = S.t; sfx.pick();
+      say(a, give.gold ? 'Hier, nimm mein Gold, ich brauch\'s gerade nicht!' : 'Hier, ich hab zu viel, nimm du das!', 2.6);
+      feed(`<span class="tag">[Team]</span> <b>${a.name}</b> gibt dir ${priceStr(Object.fromEntries(Object.entries(give).filter(([, v]) => v > 0)))}.`);
+      updateHud(true);
+    }
+  }
+  // Wunsch ansagen, wenn noch etwas fehlt
+  const plan = planNext(a);
+  if (plan && plan.key !== 'sand' && !a.wishSaid && S.t - a.wishSince > 4) {
+    const miss = missing(plan.p, a.inv);
+    if (Object.keys(miss).length) { a.wishSaid = true; say(a, `Ich spar auf ${plan.n}, mir fehlen noch ${priceStr(miss)}.`, 2.6); }
+  }
+  // Bett einbauen, wenn Blöcke übrig sind
+  if (bed.alive && S.t > 20 && !(a.noBuildUntil > S.t) && a.inv.sand >= (S.void ? 14 : 4) && ringGaps('gruen').length && !nearest(home, 7)) {
+    if (a.state !== 'build') say(a, 'Ich bau unser Bett ein!');
+    a.state = 'build'; return;
+  }
   const playerAway = !p.dead && (!bed.alive || dist(p, home) > 9);
   if (playerAway && (a.sword >= 1 || a.boost) && (!S.void || a.inv.sand >= 6)) {
     const threat = nearest(p, 5); if (threat) { a.state = 'fight'; a.target = threat; return; }
@@ -806,6 +867,9 @@ function partnerAI(a, dt) {
   a.thinkT -= dt; if (a.thinkT <= 0) { a.thinkT = 0.3; partnerThink(a); }
   if (a.state === 'shop') { if (tryShop(a, dt)) return; a.thinkT = Math.min(a.thinkT, 0.1); }
   if (a.state === 'fight' && a.target && !a.target.dead) return combat(a, a.target, dt);
+  if (a.state === 'build') { if (tryFortify(a, dt)) return; a.thinkT = 0; }
+  if (a.state === 'cut') { if (tryCut(a, dt)) return; a.thinkT = 0; }
+  if (a.state === 'retreat') blockBehind(a, dt);
   moveToGoal(a, dt);
 }
 
@@ -900,7 +964,8 @@ function attack(a) {
   if (a === S.player) {
     const tx = Math.floor(a.x + a.fx * 0.9), ty = Math.floor(a.y + a.fy * 0.9);
     const t = tileAt(tx, ty);
-    if (breakable(t)) { a.atkCd = 0.3; a.swing = 0.18; chipWall(tx, ty, 0.35); return true; }
+    if (breakable(t)) { a.atkCd = 0.3; a.swing = 0.18; chipWall(tx, ty, 0.35, a); return true; }
+    if (t === 2 && S.placed[ty * MW + tx] && !(tx === Math.floor(a.x) && ty === Math.floor(a.y))) { a.atkCd = 0.3; a.swing = 0.18; mineFloor(tx, ty, 0.35, a); return true; }
     a.atkCd = 0.25; a.swing = 0.18;
   }
   return false;
@@ -945,17 +1010,98 @@ function destroyBed(k, by) {
 
 // ---------- Mauern ----------
 const wallHp = {};
-function chipWall(x, y, amount) {
+function giveBlock(by) { if (!by) return; if (by === S.player) S.inv.sand++; else if (by.inv) by.inv.sand++; }
+function chipWall(x, y, amount, by) {
   const i = y * MW + x, t = S.map[i];
   const max = t === 6 ? 1.6 : t === 14 ? 2.2 : 0.9;
   wallHp[i] = (wallHp[i] ?? max) - amount; sfx.crack();
   for (let n = 0; n < 3; n++) S.parts.push({ x: x + 0.5, y: y + 0.6, vx: (Math.random() - 0.5) * 3, vy: -Math.random() * 3, t: 0.4, col: WALL_TOP[t] || '#ccc', s: 3 });
-  if (wallHp[i] <= 0) breakWall(x, y);
+  if (wallHp[i] <= 0) { if (t === 7) giveBlock(by); breakWall(x, y); }
 }
 function breakWall(x, y) {
   const i = y * MW + x, t = S.map[i];
   delete wallHp[i];
   setTile(x, y, t === 6 ? 4 : t === 14 ? 1 : (S.under[i] || 2));
+}
+// selbst gebaute Brückenblöcke abbauen: wer draufsteht, fällt
+function mineFloor(x, y, amount, by) {
+  const i = y * MW + x;
+  if (!S.placed[i] || S.map[i] !== 2) return;
+  wallHp[i] = (wallHp[i] ?? 0.6) - amount; sfx.crack();
+  for (let n = 0; n < 3; n++) S.parts.push({ x: x + 0.5, y: y + 0.5, vx: (Math.random() - 0.5) * 3, vy: Math.random() * 2, t: 0.4, col: '#e3d39a', s: 3 });
+  if (wallHp[i] <= 0) { delete wallHp[i]; S.placed[i] = 0; setTile(x, y, 0); giveBlock(by); }
+}
+// Ring um das Bett: alle Nachbarfelder der beiden Bettfelder, die frei begehbar sind (Tür am Spawn bleibt offen)
+function ringGaps(k) {
+  const b = S.beds[k]; if (!b.alive) return [];
+  const sp = k === 'gruen' ? S.spawn : bedFront(k, 1.8);
+  const keep = new Set([Math.floor(sp.y) * MW + Math.floor(sp.x)]);
+  const d = S.dealers[k]; if (d) keep.add(Math.floor(d.y) * MW + Math.floor(d.x));
+  for (const g of S.gens) if (g.team === k) keep.add(Math.floor(g.y) * MW + Math.floor(g.x));
+  const out = [];
+  for (let y = b.y - 1; y <= b.y + 2; y++) for (let x = b.x - 1; x <= b.x + 1; x++) {
+    if (x === b.x && (y === b.y || y === b.y + 1)) continue;
+    const t = tileAt(x, y);
+    if (!walkable(t) || keep.has(y * MW + x) || (S.skipGap[y * MW + x] || 0) > S.t) continue;
+    if (S.ents.some(e => !e.dead && Math.floor(e.x) === x && Math.floor(e.y) === y)) continue;
+    out.push([x, y]);
+  }
+  return out;
+}
+// eine Einheit baut den nächsten fehlenden Ringblock (true = beschäftigt)
+function tryFortify(u, dt) {
+  const gaps = ringGaps(u.team);
+  if (!gaps.length || u.inv.sand <= 0) return false;
+  gaps.sort((a, b) => Math.hypot(a[0] + 0.5 - u.x, a[1] + 0.5 - u.y) - Math.hypot(b[0] + 0.5 - u.x, b[1] + 0.5 - u.y));
+  const [gx, gy] = gaps[0], c = { x: gx + 0.5, y: gy + 0.5 }, gi = gy * MW + gx;
+  // Lücke nicht erreichbar? Nach 4 s aufgeben und eine Weile ignorieren
+  if (u.gapIdx !== gi) { u.gapIdx = gi; u.gapSince = S.t; }
+  if (S.t - u.gapSince > 4) { S.skipGap[gi] = S.t + 30; u.gapIdx = -1; u.noBuildUntil = S.t + 20; return false; }
+  if (dist(u, c) > 2.4) {
+    const b = S.beds[u.team], a = Math.atan2(c.y - (b.y + 1), c.x - (b.x + 0.5));
+    u.goal = nearestWalkable(c.x + Math.cos(a) * 1.1, c.y + Math.sin(a) * 1.1, 1.5);
+    moveToGoal(u, dt); return true;
+  }
+  u.vx = u.vy = 0; u.dir = c.x >= u.x ? 1 : -1; u.buildT += dt;
+  if (u.buildT < 0.4) return true;
+  u.buildT = 0; S.under[gy * MW + gx] = tileAt(gx, gy); setTile(gx, gy, 7); u.inv.sand--; u.swing = 0.18; sfx.place();
+  for (let n = 0; n < 4; n++) S.parts.push({ x: c.x, y: c.y, vx: (Math.random() - 0.5) * 2, vy: -Math.random() * 2, t: 0.35, col: '#efe0ad', s: 3 });
+  return true;
+}
+// gebaute Brücke direkt am Inselrand der eigenen Basis (zum Abschneiden)
+function bridgeEntry(k, home) {
+  let best = null, bd = 9;
+  const hx = Math.floor(home.x), hy = Math.floor(home.y);
+  for (let y = hy - 8; y <= hy + 8; y++) for (let x = hx - 8; x <= hx + 8; x++) {
+    if (x < 0 || y < 0 || x >= MW || y >= MH) continue;
+    const i = y * MW + x; if (!S.placed[i] || S.map[i] !== 2) continue;
+    for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+      const t = tileAt(nx, ny); if (!walkable(t) || S.placed[ny * MW + nx] || bedAt(nx, ny)) continue;
+      const d = Math.hypot(x + 0.5 - home.x, y + 0.5 - home.y);
+      if (d < bd) { bd = d; best = { x, y, sx: nx + 0.5, sy: ny + 0.5 }; }
+    }
+  }
+  return best;
+}
+function tryCut(u, dt) {
+  const c = u.cut; if (!c || !S.placed[c.y * MW + c.x]) { u.cut = null; return false; }
+  if (Math.hypot(u.x - c.sx, u.y - c.sy) > 0.5) { u.goal = { x: c.sx, y: c.sy }; moveToGoal(u, dt); return true; }
+  u.vx = u.vy = 0; u.dir = c.x + 0.5 >= u.x ? 1 : -1; u.breakT += dt;
+  if (u.breakT >= 0.45) { u.breakT = 0; u.swing = 0.18; mineFloor(c.x, c.y, 0.35, u); if (!S.placed[c.y * MW + c.x]) { if (Math.random() < 0.5) say(u, 'Brücke weg! Viel Spaß im Void.'); u.cut = null; } }
+  return true;
+}
+// auf der Flucht einen Block hinter sich setzen
+function blockBehind(u, dt) {
+  u.blockCd = (u.blockCd || 0) - dt;
+  if (u.blockCd > 0 || u.inv.sand <= 0) return;
+  let h = null, hd = 2.6; for (const e of hostilesOf(u)) { const d = dist(e, u); if (d < hd) { hd = d; h = e; } }
+  if (!h) return;
+  const a = Math.atan2(h.y - u.y, h.x - u.x), cx = Math.floor(u.x + Math.cos(a) * 1.0), cy = Math.floor(u.y + Math.sin(a) * 1.0);
+  const t = tileAt(cx, cy);
+  if (!walkable(t) || bedAt(cx, cy) || (cx === Math.floor(u.x) && cy === Math.floor(u.y))) return;
+  if (S.ents.some(e => !e.dead && Math.floor(e.x) === cx && Math.floor(e.y) === cy)) return;
+  S.under[cy * MW + cx] = t; setTile(cx, cy, 7); u.inv.sand--; u.blockCd = 2.5; sfx.place();
+  if (Math.random() < 0.4) say(u, 'Block hinter mich!');
 }
 function playerBuild(p, dt) {
   p.buildT -= dt;
@@ -967,7 +1113,7 @@ function playerBuild(p, dt) {
   if (S.inv.sand <= 0) { if (!p.warnedSand) { p.warnedSand = true; caption('Keine Blöcke mehr!\nAb zum Dealer', -6); setTimeout(() => (p.warnedSand = false), 3000); } return; }
   if (bedAt(tx, ty) || isWall(t)) return;
   if (S.ents.some(e => !e.dead && Math.floor(e.x) === tx && Math.floor(e.y) === ty)) return;
-  if (t === 0) setTile(tx, ty, 2);                                   // im Void: Brücke
+  if (t === 0) { setTile(tx, ty, 2); S.placed[ty * MW + tx] = 1; }  // im Void: Brücke
   else { S.under[ty * MW + tx] = t; setTile(tx, ty, 7); }            // auf Boden: Mauer
   S.inv.sand--; sfx.place();
   if (Math.random() < 0.05) say(S.partner, 'Ich bau da links auch noch die Wand hin.');
@@ -1143,7 +1289,7 @@ function physics(e, dt) {
     const lx = nx + Math.sign(vx) * 0.32, ly = ny + Math.sign(vy) * 0.32;
     if (!tileAt(lx, ly) && (vx || vy)) {
       e.bridgeCd -= dt;
-      if (S.inv.sand > 0 && e.bridgeCd <= 0) { setTile(lx, ly, 2); S.inv.sand--; sfx.place(); e.bridgeCd = e.def.bridgeCd; }
+      if (S.inv.sand > 0 && e.bridgeCd <= 0) { setTile(lx, ly, 2); S.placed[Math.floor(ly) * MW + Math.floor(lx)] = 1; S.inv.sand--; sfx.place(); e.bridgeCd = e.def.bridgeCd; }
       if (!tileAt(lx, ly)) {
         if (S.inv.sand <= 0 && !e.warnedSand) { e.warnedSand = true; caption('Keine Blöcke mehr!\nAb zum Dealer', -6); setTimeout(() => (e.warnedSand = false), 4000); }
         // Leon bleibt an der Kante stehen, Moritz läuft ohne Blöcke einfach weiter ins Void
@@ -1232,6 +1378,7 @@ function render() {
     ctx.drawImage(tileTex[isWall(t) ? (t === 7 ? (S.under[y * MW + x] || 2) : t === 6 ? 4 : t === 15 ? 2 : 1) : t], x * T, y * T, T, T);
     if (t === 11) { ctx.fillStyle = `rgba(255,220,80,${0.15 + 0.15 * Math.sin(S.t * 3 + x * 0.7 + y * 0.4)})`; ctx.fillRect(x * T, y * T, T, T); }
     if (S.mapDef.deco && t === S.mapDef.deco.tile && !bedAt(x, y)) drawDeco(x, y, S.mapDef.deco);
+    if (t === 2 && wallHp[y * MW + x] !== undefined) { ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x * T + 6, y * T + 6); ctx.lineTo(x * T + 16, y * T + 18); ctx.lineTo(x * T + 26, y * T + 10); ctx.stroke(); }
     if (t === 10) { ctx.fillStyle = `rgba(255,255,255,${0.08 + 0.06 * Math.sin(S.t * 2 + x + y * 0.5)})`; ctx.fillRect(x * T, y * T + 10, T, 3); }
   }
   // Border-Linie
