@@ -68,6 +68,21 @@
 
   <div class="sect">Wer spielt? <span>(tippen = los!)</span></div>
   <div id="chars"></div>
+  <div class="sect">👥 Zusammen spielen</div>
+  <div class="mpBox">
+    <div class="mpRow">
+      <button id="mpHostCoop" class="mcbtn mpBtn">🤝 Hosten: miteinander</button>
+      <button id="mpHostVs" class="mcbtn mpBtn">⚔️ Hosten: gegeneinander</button>
+    </div>
+    <div id="mpCode" class="mpCode hidden">000</div>
+    <button id="mpShare" class="mcbtn mpBtn hidden">📲 Link teilen (AirDrop, WhatsApp …)</button>
+    <div class="mpRow">
+      <input id="mpCodeIn" class="mpIn" inputmode="numeric" pattern="[0-9]*" maxlength="3" placeholder="Code">
+      <button id="mpJoinBtn" class="mcbtn mpBtn">Beitreten</button>
+      <button id="mpLeave" class="mcbtn mpBtn ghost">✕</button>
+    </div>
+    <p id="mpStatus" class="mpStatus">Einer hostet, der andere gibt den dreistelligen Code ein.</p>
+  </div>
   <div class="bonus">
     <div class="bonusT">⚽ Bonus: AmTorVorbeigehustled <span>(Elfmeter, Super Smash Football &amp; FIFA-Bugs)</span></div>
     <button class="mcbtn kickBtn" data-char="leon">als Leon</button>
@@ -110,9 +125,11 @@
 
 <div id="rotate">Bitte Handy hochkant halten 📱</div>
 
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="maps.js"></script>
 <script src="game.js"></script>
 <script src="kick.js"></script>
 <script src="menu.js"></script>
+<script src="mp.js"></script>
 </body>
 </html>

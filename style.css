@@ -143,3 +143,12 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; i
 #chars .char canvas { width: 54px; height: 90px; }
 #menu { overflow-x: hidden; }
 #menu > * { flex-shrink: 0; }
+
+/* --- Multiplayer-Lobby --- */
+.mpBox { background: rgba(0,0,0,.4); padding: 8px 10px 6px; max-width: 360px; width: 92vw; }
+.mpRow { display: flex; gap: 6px; justify-content: center; margin: 4px 0; }
+.mpBtn { width: auto; flex: 1; margin: 0; font-size: 12px; padding: 8px 6px; }
+.mpBtn.ghost { flex: 0 0 40px; }
+.mpCode { font: 900 44px Impact, "Arial Black", sans-serif; letter-spacing: 10px; color: #ffd83a; text-shadow: 3px 3px 0 #000; margin: 4px 0; }
+.mpIn { flex: 0 0 90px; font: bold 22px ui-monospace, monospace; text-align: center; letter-spacing: 4px; padding: 6px; border: 3px solid #1b1b1b; background: #eee; color: #222; }
+.mpStatus { font-size: 11.5px; line-height: 1.35; margin: 6px 0 2px; color: #e6ffe0; min-height: 30px; }

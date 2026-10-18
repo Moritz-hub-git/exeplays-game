@@ -224,6 +224,7 @@ function startGame(charKey, mapId = selectedMap, modeId = selectedMode) {
   const ps = nearestWalkable(S.spawn.x + 1, S.spawn.y);
   S.partner = mkChar(other(charKey), oc, ps.x, ps.y, false);
   S.ents.push(S.player, S.partner);
+  S.guest = null; mpSetupGuest();
   $('hud').classList.remove('hidden');
   ['menu', 'over', 'intro'].forEach(id => $(id).classList.add('hidden'));
   updateHud(true);
@@ -253,7 +254,7 @@ function bedFront(team, d = 1.8) {
 const tileAt = (x, y) => { x = Math.floor(x); y = Math.floor(y); if (x < 0 || y < 0 || x >= MW || y >= MH) return S.void ? 0 : 9; return S.map[y * MW + x]; };
 function setTile(x, y, v) {
   x = Math.floor(x); y = Math.floor(y); if (x < 0 || y < 0 || x >= MW || y >= MH) return;
-  if (S.map[y * MW + x] !== v) { S.map[y * MW + x] = v; S.mapVer++; }
+  if (S.map[y * MW + x] !== v) { S.map[y * MW + x] = v; S.mapVer++; if (S.netDiff) S.netDiff.push(y * MW + x, v); }
 }
 const bedAt = (x, y) => { x = Math.floor(x); y = Math.floor(y); for (const k in S.beds) { const b = S.beds[k]; if (b.alive && b.x === x && (b.y === y || b.y + 1 === y)) return k; } return null; };
 const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -351,11 +352,13 @@ window.addEventListener('keyup', e => {
 // ---------- UI: Sprechblasen, Captions, Feed ----------
 function say(ent, text, t = 2.6) { if (!ent) return; ent.bubble = text; ent.bubbleT = t; }
 function caption(text, rot = -8, x = Math.random() * 0.35 + 0.05, y = Math.random() * 0.3 + 0.18) {
+  if (S && S.netOut && MP.coop) S.netOut.push(['c', text, rot, x, y]);
   const d = document.createElement('div'); d.className = 'cap'; d.textContent = text;
   d.style.setProperty('--r', rot + 'deg'); d.style.left = (x * 100) + '%'; d.style.top = (y * 100) + '%';
   $('captions').appendChild(d); setTimeout(() => d.remove(), 3300);
 }
 function feed(html) {
+  if (S && S.netOut) S.netOut.push(['f', html]);
   const f = $('feed'); const d = document.createElement('div'); d.innerHTML = html; f.appendChild(d);
   while (f.children.length > 4) f.firstChild.remove();
   setTimeout(() => d.remove(), 6200);
@@ -409,6 +412,7 @@ function priceStr(p) { if (p && !Object.keys(p).length) return 'gratis'; return 
 function nearShop() { return S && !S.player.dead && dist(S.player, S.shopNpc) < 2.6; }
 function openShop() {
   if (!S || S.over) return;
+  if (S.guestMode) return guestOpenShop();
   if (!nearShop()) { caption('Der Dealer steht\nbei deinem Bett!', -5); return; }
   $('shop').classList.remove('hidden'); renderShop();
   input.mx = input.my = 0;
@@ -441,17 +445,17 @@ function refreshShop() {
   }
   $('shopInv').textContent = `${S.inv.bronze} Bronze · ${S.inv.iron} Eisen · ${S.inv.gold} Gold · ${S.inv.sand} Sandstein · ${SWORDS[S.sword].name}`;
 }
-function tnt() {
-  const p = S.player; S.shake = 0.5;
+function tnt(p = S.player) {
+  if (p === S.player) S.shake = 0.5;
   for (let i = 0; i < 30; i++) S.parts.push({ x: p.x, y: p.y, vx: (Math.random() - 0.5) * 8, vy: (Math.random() - 0.5) * 8, t: 0.6, col: Math.random() < 0.5 ? '#ff5722' : '#ffd52e', s: 4 });
   beep(60, 0.6, 'sawtooth', 0.12, -30);
-  for (const e of S.ents) if (e.kind === 'enemy' && !e.dead && dist(e, p) < 4.5) {
+  for (const e of S.ents) if (e.team !== p.team && !e.dead && dist(e, p) < 4.5) {
     const a = Math.atan2(e.y - p.y, e.x - p.x); e.kbx = Math.cos(a) * 9; e.kby = Math.sin(a) * 9; e.lastHitBy = p; damage(e, 6, p);
   }
   for (let y = Math.floor(p.y) - 2; y <= Math.floor(p.y) + 2; y++) for (let x = Math.floor(p.x) - 2; x <= Math.floor(p.x) + 2; x++) {
     const t = tileAt(x, y); if (breakable(t)) breakWall(x, y);
   }
-  closeShop(); caption('BOOOM', 8);
+  if (p === S.player) { closeShop(); caption('BOOOM', 8); }
 }
 
 // ---------- Einheiten: eigenes Inventar, eigener Shop, Taktik ----------
@@ -508,7 +512,7 @@ function mkEnemy(team) {
   const st = S.ai.strength, hp = Math.round(14 * st + S.wave);
   const skinKey = 'en_' + team + '_' + ((Math.random() * 4) | 0);
   const f = spawnPoint(team);
-  const u = { kind: 'enemy', team, name: NAMES[(Math.random() * NAMES.length) | 0], x: f.x + (Math.random() - 0.5) * 0.4, y: f.y + (Math.random() - 0.5) * 0.4,
+  const u = { kind: 'enemy', skinKey, team, name: NAMES[(Math.random() * NAMES.length) | 0], x: f.x + (Math.random() - 0.5) * 0.4, y: f.y + (Math.random() - 0.5) * 0.4,
     vx: 0, vy: 0, hp, max: hp, dir: 1, sprites: spritesFor(skinKey, enemySkin(team)), atkCd: 1, hurtT: 0, walk: 0, dead: false,
     fallT: 0, kbx: 0, kby: 0, buildT: 0, breakT: 0, speed: 1.9 + Math.random() * 0.4, bubble: null, bubbleT: 0,
     shotCd: 1, thinkT: 0, strafeT: 0, strafeDir: 1, state: 'idle', goal: null, target: null, pushing: false, lastHurt: -99 };
@@ -521,10 +525,10 @@ function mkEnemy(team) {
 function sandPlan(u) { return { key: 'sand', p: { bronze: 4 }, f: () => (u.inv.sand += 16), n: '16 Blöcke', ic: '🧱', quiet: true }; }
 function upgradeOptions(u) {
   const o = [];
-  if (u.sword < 3 && !(u === S.partner && u.sword >= 2)) o.push({ key: 'sword', p: SWORD_PRICES[u.sword], f: () => u.sword++, n: SWORDS[u.sword + 1].name, ic: '⚔️' });
+  if (u.sword < 3 && !(u === S.partner && !u.remote && u.sword >= 2)) o.push({ key: 'sword', p: SWORD_PRICES[u.sword], f: () => u.sword++, n: SWORDS[u.sword + 1].name, ic: '⚔️' });
   if (!u.armor) o.push({ key: 'armor', p: { iron: 10 }, f: () => (u.armor = 1), n: 'Kettenrüstung', ic: '🛡️' });
   if (!u.bow && S.t >= S.ai.bowAfter) o.push({ key: 'bow', p: { gold: 3 }, f: () => (u.bow = 1), n: 'Bogen', ic: '🏹' });
-  if (u === S.partner && !S.partnerBedUp && S.beds.gruen.alive)
+  if (u === S.partner && !u.remote && !S.partnerBedUp && S.beds.gruen.alive)
     o.push({ key: 'bed', p: { iron: 6 }, f: () => { const b = S.beds.gruen; b.max += 40; b.hp += 40; S.partnerBedUp = true; caption('Bett-Schutz\nvon ' + u.name + '!', -6); }, n: 'Bett-Schutz fürs Team', ic: '🛏️' });
   return o;
 }
@@ -830,7 +834,7 @@ function moveToward(a, gx, gy, sp) {
 function partnerThink(a) {
   const bed = S.beds.gruen, p = S.player, home = bed.alive ? bedFront('gruen', 2.6) : null;
   a.target = null;
-  const enemies = S.ents.filter(e => e.kind === 'enemy' && !e.dead && e.fallT <= 0 && walkable(tileAt(e.x, e.y)));
+  const enemies = S.ents.filter(e => e.team !== 'gruen' && !e.dead && e.fallT <= 0 && walkable(tileAt(e.x, e.y)));
   const nearest = (o, r) => { let b = null, bd = r; for (const e of enemies) { const d = dist(e, o); if (d < bd) { bd = d; b = e; } } return b; };
   if (a.hp < a.max * 0.35 && bed.alive && !nearest(a, 1.3)) {
     if (a.state !== 'retreat') say(a, ['Ich hab kaum noch Herzen, ich geh heilen!', 'Rückzug, ich bin gleich down!'][(Math.random() * 2) | 0]);
@@ -903,7 +907,7 @@ function partnerAI(a, dt) {
 function damage(e, amount, from) {
   if (e.dead || e.fallT > 0) return;
   if (e === S.player && S.armor) amount *= 0.5;
-  else if (e !== S.player && e.armor) amount *= 0.6;
+  else if (e !== S.player && e.armor) amount *= e.remote ? 0.5 : 0.6;
   e.hp -= amount; e.hurtT = 0.25; e.lastHurt = S.t;
   floatText(e.x, e.y - 1.2, '-' + Math.max(1, Math.round(amount)), '#ff5555');
   if (e === S.player) { sfx.hurt(); S.shake = Math.max(S.shake, 0.15); if (Math.random() < 0.06) say(S.player, ['Ich kassiere gerade von irgendwo!', 'Woher bekomm ich den ganzen Schaden?', 'Ich sterbe, ich sterbe!'][(Math.random() * 3) | 0]); }
@@ -928,6 +932,7 @@ function kill(e, by, fell) {
     // Ausrüstung und Blöcke des Gegners sind einfach weg
     freshGear(e);
     if (by === S.player) { S.kills++; S.inv.bronze += 3; floatText(e.x, e.y - 1.6, '+3 Bronze', '#e8a060'); }
+    if (by && by.remote) by.inv.bronze += 3;
     if (by === S.partner && Math.random() < 0.3) say(S.partner, ['EZ', 'Gönn dir!', 'Uncut!', 'Ungehusstled!'][(Math.random() * 4) | 0]);
   } else {
     e.respawnT = 4;
@@ -937,6 +942,9 @@ function kill(e, by, fell) {
       if (!S.beds.gruen.alive) { endGame(false); return; }
       if (fell) { S.fallsP++; caption(['FAIL!!!', 'Wieso nur?\nWieso?', 'Beim Weg\nverkackt.'][S.fallsP % 3], -8); setTimeout(() => say(S.partner, ['Was machst du?? 😂', 'Er wollte den Weg bauen und hat verkackt.', 'Das hat er nicht gelernt.'][(Math.random() * 3) | 0]), 700); }
       else caption('Du bist gestorben!\nRespawn in 4...', -4, 0.15, 0.35);
+    } else if (e.remote) {
+      freshGear(e); e.boost = 0;
+      if (!S.beds[e.team].alive) { e.respawnT = 99999; feed(`<b>${e.name}</b> ist raus.`); if (e.team !== 'gruen') mpGuestOut(); }
     } else if (e === S.partner) {
       e.boost = 0; freshGear(e);
       if (!S.beds.gruen.alive) { e.respawnT = 99999; feed(`<b>${e.name}</b> ist raus. Ab jetzt alleine...`); }
@@ -945,7 +953,12 @@ function kill(e, by, fell) {
   }
   updateHud(true);
 }
+// von einem Menschen gesteuert: der Spieler auf diesem Gerät oder der Mitspieler (Multiplayer)
+const ctrl = e => e === S.player || !!e.remote;
+const invOf = e => (e === S.player ? S.inv : e.inv);
+const bowOf = e => (e === S.player ? S.bow : e.bow);
 function heroDmg(a) {
+  if (a.remote) return SWORDS[a.sword].dmg + (a.def.dmgBonus || 0);
   if (a === S.partner) return SWORDS[a.sword].dmg * 0.75 + (a.boost ? 2 : 0);
   return SWORDS[S.sword].dmg + (a.def.dmgBonus || 0);
 }
@@ -960,7 +973,7 @@ function attack(a) {
   if (target) {
     a.atkCd = a.kind === 'hero' ? 0.38 : 0.95;
     const ang = Math.atan2(target.y - a.y, target.x - a.x);
-    const kb = a === S.player ? a.def.kb : 4.5;
+    const kb = ctrl(a) ? a.def.kb : 4.5;
     target.kbx = Math.cos(ang) * kb; target.kby = Math.sin(ang) * kb; target.lastHitBy = a;
     a.dir = Math.cos(ang) >= 0 ? 1 : -1; a.swing = 0.18;
     damage(target, dmg, a);
@@ -972,13 +985,13 @@ function attack(a) {
     if (!b.alive || k === a.team) continue;
     if (canHitBed(a, k)) {
       a.atkCd = a.kind === 'hero' ? 0.45 : 0.9; a.swing = 0.18;
-      hitBed(k, a.kind === 'hero' ? 2 + Math.floor(S.sword / 2) : 2, a);
+      hitBed(k, a.kind === 'hero' ? 2 + Math.floor((a === S.player ? S.sword : a.sword) / 2) : 2, a);
       return true;
     }
   }
-  if (a === S.player && S.bow) {
+  if (ctrl(a) && bowOf(a)) {
     let tgt = null, bd = 7.5;
-    for (const e of S.ents) if (e.kind === 'enemy' && !e.dead && e.fallT <= 0) { const d = dist(a, e); if (d < bd) { bd = d; tgt = e; } }
+    for (const e of S.ents) if (e.team !== a.team && !e.dead && e.fallT <= 0) { const d = dist(a, e); if (d < bd) { bd = d; tgt = e; } }
     if (tgt) {
       shootArrow(a, tgt, 14, 2, 0);
       a.atkCd = 0.6; beep(700, 0.06, 'triangle', 0.05, -300);
@@ -986,7 +999,7 @@ function attack(a) {
     }
   }
   // Spieler haut Mauern ein
-  if (a === S.player) {
+  if (ctrl(a)) {
     const tx = Math.floor(a.x + a.fx * 0.9), ty = Math.floor(a.y + a.fy * 0.9);
     const t = tileAt(tx, ty);
     if (breakable(t)) { a.atkCd = 0.3; a.swing = 0.18; chipWall(tx, ty, 0.35, a); return true; }
@@ -1127,20 +1140,21 @@ function blockBehind(u, dt) {
   S.under[cy * MW + cx] = t; setTile(cx, cy, 7); u.inv.sand--; u.blockCd = 2.5; sfx.place();
   if (Math.random() < 0.4) say(u, 'Block hinter mich!');
 }
-function playerBuild(p, dt) {
+function heroBuild(p, dt, want) {
+  const inv = invOf(p);
   p.buildT -= dt;
-  if (!input.build || p.buildT > 0 || p.dead || p.fallT > 0) return;
+  if (!want || p.buildT > 0 || p.dead || p.fallT > 0) return;
   p.buildT = 0.22;
   let tx = Math.floor(p.x + p.fx * 0.95), ty = Math.floor(p.y + p.fy * 0.95);
   if (tx === Math.floor(p.x) && ty === Math.floor(p.y)) { tx = Math.floor(p.x + p.fx * 1.6); ty = Math.floor(p.y + p.fy * 1.6); }
   const t = tileAt(tx, ty);
-  if (S.inv.sand <= 0) { if (!p.warnedSand) { p.warnedSand = true; caption('Keine Blöcke mehr!\nAb zum Dealer', -6); setTimeout(() => (p.warnedSand = false), 3000); } return; }
+  if (inv.sand <= 0) { if (p === S.player && !p.warnedSand) { p.warnedSand = true; caption('Keine Blöcke mehr!\nAb zum Dealer', -6); setTimeout(() => (p.warnedSand = false), 3000); } return; }
   if (bedAt(tx, ty) || isWall(t)) return;
   if (S.ents.some(e => !e.dead && Math.floor(e.x) === tx && Math.floor(e.y) === ty)) return;
   if (t === 0) { setTile(tx, ty, 2); S.placed[ty * MW + tx] = 1; }  // im Void: Brücke
   else { S.under[ty * MW + tx] = t; setTile(tx, ty, 7); }            // auf Boden: Mauer
-  S.inv.sand--; sfx.place();
-  if (Math.random() < 0.05) say(S.partner, 'Ich bau da links auch noch die Wand hin.');
+  inv.sand--; sfx.place();
+  if (p === S.player && !S.partner.remote && Math.random() < 0.05) say(S.partner, 'Ich bau da links auch noch die Wand hin.');
 }
 
 // ---------- Gags / Partner-Events ----------
@@ -1208,8 +1222,9 @@ function update(dt) {
     p.vx = mx * p.def.speed; p.vy = my * p.def.speed;
     if (input.hit) attack(p);
   }
-  playerBuild(p, dt);
-  partnerAI(S.partner, dt);
+  heroBuild(p, dt, input.build);
+  if (!S.partner.remote) partnerAI(S.partner, dt);
+  if (S.guest) netControl(S.guest, dt);
   for (const e of S.ents) if (e.kind === 'enemy') enemyAI(e, dt);
   for (const e of S.ents) physics(e, dt);
   S.ents = S.ents.filter(e => !(e.kind === 'enemy' && e.dead));
@@ -1262,7 +1277,9 @@ function update(dt) {
     else if ((S.shopRefresh = (S.shopRefresh || 0) - dt) <= 0) { S.shopRefresh = 0.4; refreshShop(); }
   }
   // Sieg?
-  if (!S.over && S.enemyTeams.every(k => !S.beds[k].alive) && !S.ents.some(e => e.kind === 'enemy' && !e.dead)) endGame(true);
+  if (!S.over && S.enemyTeams.every(k => !S.beds[k].alive) && !S.ents.some(e => e.kind === 'enemy' && !e.dead)
+    && (!S.guest || S.guest.team === 'gruen' || S.guest.respawnT > 9999)) endGame(true);
+  mpHostTick(dt);
   updateHud();
 }
 
@@ -1293,8 +1310,10 @@ function physics(e, dt) {
     if (e.kind === 'hero') {
       e.respawnT -= dt;
       if (e.respawnT <= 0 && !S.beds.gruen.alive && e.isPlayer) { endGame(false); return; }
-      if (e.respawnT <= 0 && S.beds.gruen.alive && !S.over) {
-        e.dead = false; e.hp = e.max; e.fallT = 0; e.x = S.spawn.x + (e.isPlayer ? 0 : 0.35); e.y = S.spawn.y; e.kbx = e.kby = 0;
+      const tb = S.beds[e.team];
+      if (e.respawnT <= 0 && tb && tb.alive && !S.over) {
+        const sp = e.team === 'gruen' ? S.spawn : spawnPoint(e.team);
+        e.dead = false; e.hp = e.max; e.fallT = 0; e.x = sp.x + (e.isPlayer ? 0 : 0.35); e.y = sp.y; e.kbx = e.kby = 0;
         if (e.isPlayer) caption('Respawn!\nMit leeren Taschen.', -5, 0.3, 0.3);
       }
     }
@@ -1313,15 +1332,15 @@ function physics(e, dt) {
   if (tileAt(e.x, e.y) === 10) { vx = e.kbx + e.vx * 0.5; vy = e.kby + e.vy * 0.5; }
   let nx = e.x + vx * dt, ny = e.y + vy * dt;
   // Spieler: Auto-Bridge über dem Void
-  if (e === S.player && S.void && Math.abs(e.kbx) + Math.abs(e.kby) < 1) {
-    const lx = nx + Math.sign(vx) * 0.32, ly = ny + Math.sign(vy) * 0.32;
+  if (ctrl(e) && S.void && Math.abs(e.kbx) + Math.abs(e.kby) < 1) {
+    const lx = nx + Math.sign(vx) * 0.32, ly = ny + Math.sign(vy) * 0.32, inv = invOf(e);
     if (!tileAt(lx, ly) && (vx || vy)) {
       e.bridgeCd -= dt;
-      if (S.inv.sand > 0 && e.bridgeCd <= 0) { setTile(lx, ly, 2); S.placed[Math.floor(ly) * MW + Math.floor(lx)] = 1; S.inv.sand--; sfx.place(); e.bridgeCd = e.def.bridgeCd; }
+      if (inv.sand > 0 && e.bridgeCd <= 0) { setTile(lx, ly, 2); S.placed[Math.floor(ly) * MW + Math.floor(lx)] = 1; inv.sand--; sfx.place(); e.bridgeCd = e.def.bridgeCd; }
       if (!tileAt(lx, ly)) {
-        if (S.inv.sand <= 0 && !e.warnedSand) { e.warnedSand = true; caption('Keine Blöcke mehr!\nAb zum Dealer', -6); setTimeout(() => (e.warnedSand = false), 4000); }
+        if (e === S.player && inv.sand <= 0 && !e.warnedSand) { e.warnedSand = true; caption('Keine Blöcke mehr!\nAb zum Dealer', -6); setTimeout(() => (e.warnedSand = false), 4000); }
         // Leon bleibt an der Kante stehen, Moritz läuft ohne Blöcke einfach weiter ins Void
-        if (e.def.sneak || S.inv.sand > 0) { e.walk = 0; return; }
+        if (e.def.sneak || inv.sand > 0) { e.walk = 0; return; }
       }
     }
   }
@@ -1338,6 +1357,7 @@ function physics(e, dt) {
 function endGame(win) {
   if (S.over) return;
   S.over = true;
+  mpSendOver(win);
   if (win) { sfx.win(); best.wins++; } else beep(200, 0.8, 'sawtooth', 0.08, -150);
   best.kills = Math.max(best.kills, S.kills);
   localStorage.setItem('exe_best', JSON.stringify(best));
@@ -1360,8 +1380,15 @@ function endGame(win) {
     $('over').classList.remove('hidden');
   }, 1300);
 }
-$('again').addEventListener('click', () => (K ? startKick(selectedChar) : startGame(selectedChar, selectedMap, selectedMode)));
-$('toMenu').addEventListener('click', () => { if (K) { exitKick(); return; } $('over').classList.add('hidden'); showMenu(); });
+$('again').addEventListener('click', () => {
+  if (MP.role === 'guest') { $('overSub').textContent = 'Warte auf den Host…'; return; }
+  K ? startKick(selectedChar) : startGame(selectedChar, selectedMap, selectedMode);
+});
+$('toMenu').addEventListener('click', () => {
+  if (K) { exitKick(); return; }
+  if (MP.role === 'guest') { mpReset(); mpStatus('Spiel verlassen.'); }
+  $('over').classList.add('hidden'); $('hud').classList.add('hidden'); showMenu();
+});
 
 // ---------- Rendering ----------
 let cam = { x: 0, y: 0 };
@@ -1609,8 +1636,9 @@ function drawBubble(e) {
 function drawArrows(sc) {
   const p = S.player;
   const targets = [];
-  if (S.beds.gruen.alive && dist(p, S.beds.gruen) > 9) targets.push({ x: S.beds.gruen.x + 0.5, y: S.beds.gruen.y + 1, col: TEAMS.gruen.col });
-  for (const k of S.enemyTeams) { const b = S.beds[k]; if (b.alive) targets.push({ x: b.x + 0.5, y: b.y + 1, col: TEAMS[k].col }); }
+  const home = S.beds[p.team];
+  if (home && home.alive && dist(p, home) > 9) targets.push({ x: home.x + 0.5, y: home.y + 1, col: TEAMS[p.team].col });
+  for (const k of S.allTeams) { if (k === p.team) continue; const b = S.beds[k]; if (b.alive) targets.push({ x: b.x + 0.5, y: b.y + 1, col: TEAMS[k].col }); }
   for (const t of targets) {
     const dx = (t.x - p.x) * T * sc, dy = (t.y - p.y) * T * sc;
     const cx = cv.width / 2, cy = cv.height / 2;
@@ -1643,7 +1671,7 @@ function showMenu() {
     pv.getContext('2d').drawImage(makeSprite(SKINS[c.skin], 0), 0, 0);
     d.appendChild(pv);
     d.insertAdjacentHTML('beforeend', `<div class="n">${c.name}</div><div class="ign">${c.ign}</div><div class="perk">${c.perk}</div>`);
-    d.addEventListener('click', () => { initAudio(); startGame(k, selectedMap, selectedMode); });
+    d.addEventListener('click', () => { initAudio(); if (MP.role === 'guest') { mpStatus('Der Host startet das Spiel, gleich geht es los.'); return; } startGame(k, selectedMap, selectedMode); });
     box.appendChild(d);
   }
 }
@@ -1671,6 +1699,7 @@ let last = performance.now();
 function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   if (K) { if (!K.done) kickUpdate(dt); kickRender(); }
+  else if (MP.role === 'guest' && S && S.guestMode) guestTick(dt);
   else {
     if (S) update(dt);
     if (!S && !$('menu').classList.contains('hidden')) previewTick(dt); else render();
