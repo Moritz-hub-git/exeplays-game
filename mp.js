@@ -67,7 +67,7 @@ function mpSetupGuest() {
   S.ents.push(g); S.guest = g;
   S.netDiff = []; S.netOut = [];
   for (const e of S.ents) e.id = e.id || ++MP.nid;
-  MP.conn.send({ t: 'init', mapId: S.mapId, modeId: S.modeId, map: Array.from(S.map), coop: MP.coop, myId: g.id, team,
+  MP.conn.send({ t: 'init', mapId: S.mapId, modeId: S.modeId, map: Array.from(S.map), coop: MP.coop, myId: g.id, team, char: gc,
     dealers: Object.fromEntries(Object.entries(S.dealers).map(([k, d]) => [k, [d.x, d.y]])), gens: S.gens.map(x => [x.x, x.y, x.kind, x.team]), spawn: sp });
   feed(`<span class="tag">[Team]</span> <b>${g.name}</b> spielt ${MP.coop ? 'mit dir' : 'für Team ' + TEAMS[team].name + ' gegen dich'}!`);
 }
@@ -105,7 +105,7 @@ function remoteBuy(g, id) {
 // Spielstand an den Mitspieler (15× pro Sekunde)
 function mpHostTick(dt) {
   if (MP.role !== 'host' || !S || !S.guest || !MP.conn || !MP.conn.open) return;
-  MP.snapT -= dt; if (MP.snapT > 0) return; MP.snapT = 1 / 15;
+  MP.snapT -= dt; if (MP.snapT > 0) return; MP.snapT = 1 / 20;
   for (const e of S.ents) e.id = e.id || ++MP.nid;
   const g = S.guest, r2 = v => Math.round(v * 100) / 100;
   MP.conn.send({
@@ -116,10 +116,12 @@ function mpHostTick(dt) {
     it: S.items.map(i => [r2(i.x), r2(i.y), i.kind]),
     ar: S.arrows.map(a => [r2(a.x), r2(a.y), r2(a.vx), r2(a.vy), a.team]),
     b: Object.fromEntries(Object.entries(S.beds).map(([k, b]) => [k, [Math.ceil(b.hp), b.max, b.alive ? 1 : 0]])),
-    d: S.netDiff.splice(0), o: S.netOut.splice(0),
+    d: (() => { const raw = S.netDiff.splice(0), out = []; for (let i = 0; i < raw.length; i += 2) out.push(raw[i], S.map[raw[i]], S.placed[raw[i]]); return out; })(),
+    o: S.netOut.splice(0),
     br: S.border ? r2(S.border.r) : 0,
     dl: Object.fromEntries(Object.entries(S.dealers).map(([k, d]) => [k, [r2(d.x), r2(d.y), d.talkT > 0 ? 1 : 0]])),
-    me: { inv: g.inv, sword: g.sword, armor: g.armor, bow: g.bow, dead: g.dead, rt: g.respawnT },
+    me: { inv: g.inv, sword: g.sword, armor: g.armor, bow: g.bow, dead: g.dead, rt: g.respawnT, ack: g.rin.seq || 0 },
+    wh: Object.entries(wallHp).map(([i, v]) => [+i, Math.round(v * 100) / 100]),
   });
 }
 function mpSendOver(hostWin) {
@@ -169,7 +171,8 @@ function mpGuestData(d) {
 function guestStart(d) {
   const G = buildSetup(d.mapId, d.modeId), def = G.def;
   MP.coop = d.coop;
-  MP.G = { ents: new Map(), myId: d.myId, team: d.team };
+  MP.G = { ents: new Map(), myId: d.myId, team: d.team, def: CHARS[d.char] || CHARS.leon };
+  MP.hist = new Map(); MP.seq = 0;
   S = {
     guestMode: true, t: 0, mapId: d.mapId, modeId: d.modeId, mapDef: def, mode: G.mode, theme: def.theme, C: G.C, void: G.void,
     map: Uint8Array.from(d.map), under: new Uint8Array(MW * MH), placed: new Uint8Array(MW * MH), skipGap: {},
@@ -188,8 +191,10 @@ function guestStart(d) {
   caption(MP.coop ? 'Zusammen hustlen!' : `Du spielst für\nTeam ${TEAMS[d.team].name}!`, -6, 0.3, 0.3);
 }
 function guestSnap(d) {
-  const L = MP.G;
-  for (let i = 0; i < d.d.length; i += 2) S.map[d.d[i]] = d.d[i + 1];
+  const L = MP.G, now = performance.now();
+  for (let i = 0; i < d.d.length; i += 3) { S.map[d.d[i]] = d.d[i + 1]; S.placed[d.d[i]] = d.d[i + 2]; }
+  for (const key in wallHp) delete wallHp[key];
+  for (const [i, v] of d.wh || []) wallHp[i] = v;
   for (const [k, [hp, max, alive]] of Object.entries(d.b)) { const b = S.beds[k]; if (b) { b.hp = hp; b.max = max; if (b.alive && !alive) sfx.bed(); b.alive = !!alive; } }
   S.items = d.it.map(([x, y, kind], i) => ({ x, y, kind, bob: i }));
   S.arrows = d.ar.map(([x, y, vx, vy, team]) => ({ x, y, vx, vy, team }));
@@ -203,18 +208,26 @@ function guestSnap(d) {
     let e = L.ents.get(id);
     if (!e) {
       const sprites = skin.startsWith('h:') ? spritesFor(skin.slice(2), SKINS[skin.slice(2)]) : spritesFor(skin, enemySkin(team));
-      e = { id, x, y, tx: x, ty: y, sprites, walk: 0, inv: freshInv() };
+      e = { id, x, y, sprites, walk: 0, inv: freshInv(), p0: [x, y, now], p1: [x, y, now], swing: 0 };
       L.ents.set(id, e);
     }
-    Object.assign(e, { team, name, tx: x, ty: y, dir, mv, hp, max, sword, armor, bow, fallT, hurtT: hurt ? 0.2 : 0, swing, bubble: bubble || null, dead: !!dead, kind });
-    if (Math.hypot(e.x - x, e.y - y) > 3) { e.x = x; e.y = y; } // Respawn/Teleport: nicht durchs Bild gleiten
+    // Treffer-Feedback sofort sichtbar (Partikel, Zahl, Ton)
+    if (e.hp !== undefined && hp < e.hp - 0.05 && id !== L.myId) {
+      for (let n = 0; n < 5; n++) S.parts.push({ x: e.x, y: e.y - 0.5, vx: (Math.random() - 0.5) * 3, vy: -Math.random() * 3, t: 0.4, col: '#b00', s: 3 });
+      floatText(e.x, e.y - 1.2, '-' + Math.max(1, Math.round(e.hp - hp)), '#ff5555');
+      if (dist(e, S.player || e) < 9) sfx.hit();
+    }
+    if (id === L.myId) { guestReconcile(e, x, y, d.me, dead); Object.assign(e, { team, name, mv, hp, max, sword, armor, bow, fallT, hurtT: hurt ? 0.2 : 0, bubble: bubble || null, dead: !!dead, kind }); continue; }
+    // andere Figuren: zwischen den letzten beiden Ständen interpolieren
+    const jump = Math.hypot(e.p1[0] - x, e.p1[1] - y) > 3;
+    e.p0 = jump ? [x, y, now] : e.p1; e.p1 = [x, y, now];
+    Object.assign(e, { team, name, dir, mv, hp, max, sword, armor, bow, fallT, hurtT: hurt ? 0.2 : 0, swing: Math.max(e.swing || 0, swing), bubble: bubble || null, dead: !!dead, kind });
   }
   for (const id of [...L.ents.keys()]) if (!seen.has(id)) L.ents.delete(id);
   S.ents = [...L.ents.values()];
   const me = L.ents.get(L.myId);
   if (me) {
     if (!S.player) { me.fx = 0; me.fy = -1; }
-    else { me.fx = S.player.fx; me.fy = S.player.fy; }
     S.player = me;
     if (d.me.dead && !MP.wasDead) caption('Du bist gestorben!\nAlles weg.', -4, 0.15, 0.35);
     if (!d.me.dead && MP.wasDead) caption('Respawn!', -5, 0.3, 0.3);
@@ -226,28 +239,86 @@ function guestSnap(d) {
   guestHud();
   if (!$('shop').classList.contains('hidden')) renderGuestShop();
 }
+// eigene Figur: lokal vorhergesagt, mit der Host-Position abgeglichen
+function guestReconcile(me, ax, ay, m, dead) {
+  if (!me.pred || dead || m.dead) { me.pred = { x: ax, y: ay }; me.vox = me.voy = 0; MP.hist = new Map(); me.x = ax; me.y = ay; return; }
+  for (const k of [...MP.hist.keys()]) if (k < m.ack) MP.hist.delete(k);
+  // Bezugspunkt: Vorhersage zum Zeitpunkt der quittierten Eingabe (oder die aktuelle, wenn keine Eingaben offen sind)
+  const h = MP.hist.get(m.ack) || (MP.hist.size === 0 ? me.pred : null);
+  if (!h) return;
+  const ox = ax - h.x, oy = ay - h.y, err = Math.hypot(ox, oy);
+  if (err < 0.05) return;
+  // Vorhersage um den Fehler verschieben, Verlauf mitverschieben; Bild gleitet weich nach (außer bei großen Sprüngen)
+  me.pred.x += ox; me.pred.y += oy;
+  for (const v of MP.hist.values()) { v.x += ox; v.y += oy; }
+  if (err < 1.6) { me.vox -= ox; me.voy -= oy; }
+}
+function guestBlocked(x, y, fromX, fromY) { return isWall(tileAt(x, y)) || (bedAt(x, y) && !bedAt(fromX, fromY)); }
+function guestPredict(me, mx, my, dt, shopOpen) {
+  const def = MP.G.def, p = me.pred;
+  if (!p || me.dead) return;
+  let vx = shopOpen ? 0 : mx * def.speed, vy = shopOpen ? 0 : my * def.speed;
+  if (tileAt(p.x, p.y) === 10) { vx *= 0.5; vy *= 0.5; }
+  let nx = p.x + vx * dt, ny = p.y + vy * dt;
+  // Kante: ohne Blöcke bleibt Leon stehen (wie beim Host), mit Blöcken baut der Host die Brücke
+  if (S.void && (vx || vy)) {
+    const lx = nx + Math.sign(vx) * 0.32, ly = ny + Math.sign(vy) * 0.32;
+    if (!tileAt(lx, ly) && S.inv.sand <= 0 && def.sneak) return;
+  }
+  const r = 0.28;
+  if (guestBlocked(nx + Math.sign(vx) * r, p.y, p.x, p.y)) nx = p.x;
+  if (guestBlocked(nx, ny + Math.sign(vy) * r, p.x, p.y)) ny = p.y;
+  p.x = Math.max(0.3, Math.min(MW - 0.3, nx)); p.y = Math.max(0.3, Math.min(MH - 0.3, ny));
+  if (Math.abs(vx) > 0.1) me.dir = vx > 0 ? 1 : -1;
+  me.walk = Math.abs(vx) + Math.abs(vy) > 0.1 ? (me.walk || 0) + dt * 10 : 0;
+}
 function guestTick(dt) {
   S.t += dt;
-  const k = 1 - Math.exp(-dt * 14);
-  for (const e of S.ents) { e.x += (e.tx - e.x) * k; e.y += (e.ty - e.y) * k; e.walk = e.mv ? e.walk + dt * 10 : 0; }
+  const now = performance.now(), renderAt = now - 110;
+  const me = S.player;
+  for (const e of S.ents) {
+    if (e === me) continue;
+    const [x0, y0, t0] = e.p0, [x1, y1, t1] = e.p1;
+    const a = t1 > t0 ? Math.max(0, Math.min(1.25, (renderAt - t0) / (t1 - t0))) : 1;
+    e.x = x0 + (x1 - x0) * a; e.y = y0 + (y1 - y0) * a;
+    e.walk = e.mv ? e.walk + dt * 10 : 0; e.swing = Math.max(0, (e.swing || 0) - dt);
+  }
   for (const a of S.arrows) { a.x += a.vx * dt; a.y += a.vy * dt; }
+  for (const q of S.parts) { q.x += q.vx * dt; q.y += q.vy * dt; q.vy += 6 * dt; q.t -= dt; }
+  S.parts = S.parts.filter(q => q.t > 0);
   for (const f of S.floats) { f.y -= dt * 0.8; f.t -= dt; }
   S.floats = S.floats.filter(f => f.t > 0);
   S.shake = Math.max(0, S.shake - dt);
-  // Eingaben einsammeln und 20× pro Sekunde an den Host schicken
+  // Eingaben
   let mx = input.mx, my = input.my;
   if (input.keys['w'] || input.keys['arrowup']) my = -1;
   if (input.keys['s'] || input.keys['arrowdown']) my = 1;
   if (input.keys['a'] || input.keys['arrowleft']) mx = -1;
   if (input.keys['d'] || input.keys['arrowright']) mx = 1;
+  const ml = Math.hypot(mx, my); if (ml > 1) { mx /= ml; my /= ml; }
   const shopOpen = !$('shop').classList.contains('hidden');
-  if (S.player && Math.hypot(mx, my) > 0.3) { const L = Math.hypot(mx, my); S.player.fx = mx / L; S.player.fy = my / L; }
+  if (me) {
+    if (Math.hypot(mx, my) > 0.3) { const L = Math.hypot(mx, my); me.fx = mx / L; me.fy = my / L; }
+    guestPredict(me, mx, my, dt, shopOpen);
+    // Bildkorrektur weich abbauen
+    const k = 1 - Math.exp(-dt * 12);
+    me.vox = (me.vox || 0) * (1 - k); me.voy = (me.voy || 0) * (1 - k);
+    if (me.pred) { me.x = me.pred.x + me.vox; me.y = me.pred.y + me.voy; }
+    // Schwertschwung sofort zeigen
+    me.swingCd = Math.max(0, (me.swingCd || 0) - dt); me.swing = Math.max(0, (me.swing || 0) - dt);
+    if (input.hit && !shopOpen && me.swingCd <= 0 && !me.dead) { me.swing = 0.18; me.swingCd = 0.38; }
+  }
+  // 30× pro Sekunde Eingaben senden, mit Sequenznummer für den Abgleich
   MP.inT -= dt;
-  if (MP.inT <= 0 && MP.conn && MP.conn.open) { MP.inT = 1 / 20; MP.conn.send({ t: 'in', mx, my, hit: input.hit, build: input.build, shop: shopOpen }); }
-  const near = S.player && !S.player.dead && dist(S.player, S.shopNpc) < 2.6;
+  if (MP.inT <= 0 && MP.conn && MP.conn.open) {
+    MP.inT = 1 / 30; MP.seq = (MP.seq || 0) + 1;
+    if (me && me.pred) MP.hist.set(MP.seq, { x: me.pred.x, y: me.pred.y });
+    MP.conn.send({ t: 'in', seq: MP.seq, mx, my, hit: input.hit, build: input.build, shop: shopOpen });
+  }
+  const near = me && !me.dead && dist(me, S.shopNpc) < 2.6;
   $('shopHint').classList.toggle('hidden', !near);
   if (shopOpen && !near) closeShop();
-  if (S.player) render(); else { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = S.theme.bg[0]; ctx.fillRect(0, 0, cv.width, cv.height); }
+  if (me) render(); else { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = S.theme.bg[0]; ctx.fillRect(0, 0, cv.width, cv.height); }
 }
 function guestHud() {
   const me = S.player; if (!me) return;

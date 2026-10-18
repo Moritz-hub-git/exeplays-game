@@ -90,6 +90,16 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 resize();
+// Safari: Zoom-Gesten und Doppeltipp-Zoom abfangen
+['gesturestart', 'gesturechange', 'gestureend'].forEach(ev => document.addEventListener(ev, e => e.preventDefault(), { passive: false }));
+document.addEventListener('dblclick', e => e.preventDefault(), { passive: false });
+let lastTouchEnd = 0;
+document.addEventListener('touchend', e => {
+  const now = Date.now();
+  if (now - lastTouchEnd < 320 && !e.target.closest('input, button, .item, .char, .modeChip, .mapCard, #mapStage')) e.preventDefault(); // zweiter schneller Tipp: kein Zoom
+  lastTouchEnd = now;
+}, { passive: false });
+document.addEventListener('touchmove', e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
 
 // ---------- Audio ----------
 let AC = null;
@@ -216,6 +226,7 @@ function startGame(charKey, mapId = selectedMap, modeId = selectedMode) {
     gagT: 18, over: false, overT: 0, shake: 0,
     firstBedHit: false, wave: 1,
   };
+  for (const key in wallHp) delete wallHp[key];
   // Endstein unter die Betten, dann Basen (Spawn, Generator, Dealer) automatisch aufbauen
   for (const k in S.beds) { const b = S.beds[k]; setTile(b.x, b.y, 5); setTile(b.x, b.y + 1, 5); }
   setupTeams();
@@ -979,15 +990,20 @@ function attack(a) {
     damage(target, dmg, a);
     return true;
   }
-  // Betten hauen
+  // Betten hauen (nur direkt daneben)
   for (const k in S.beds) {
     const b = S.beds[k];
     if (!b.alive || k === a.team) continue;
     if (canHitBed(a, k)) {
-      a.atkCd = a.kind === 'hero' ? 0.45 : 0.9; a.swing = 0.18;
-      hitBed(k, a.kind === 'hero' ? 2 + Math.floor((a === S.player ? S.sword : a.sword) / 2) : 2, a);
+      a.atkCd = a.kind === 'hero' ? 0.4 : 0.9; a.swing = 0.18;
+      hitBed(k, a.kind === 'hero' ? 4 + 2 * (a === S.player ? S.sword : a.sword) : 2, a);
       return true;
     }
+  }
+  // Block direkt vor einem abbauen (hat Vorrang vor dem Bogen)
+  if (ctrl(a)) {
+    const f = facingBlock(a);
+    if (f) { a.atkCd = 0.3; a.swing = 0.18; f.floor ? mineFloor(f.x, f.y, 0.35, a) : chipWall(f.x, f.y, 0.35, a); return true; }
   }
   if (ctrl(a) && bowOf(a)) {
     let tgt = null, bd = 7.5;
@@ -998,15 +1014,21 @@ function attack(a) {
       return true;
     }
   }
-  // Spieler haut Mauern ein
-  if (ctrl(a)) {
-    const tx = Math.floor(a.x + a.fx * 0.9), ty = Math.floor(a.y + a.fy * 0.9);
-    const t = tileAt(tx, ty);
-    if (breakable(t)) { a.atkCd = 0.3; a.swing = 0.18; chipWall(tx, ty, 0.35, a); return true; }
-    if (t === 2 && S.placed[ty * MW + tx] && !(tx === Math.floor(a.x) && ty === Math.floor(a.y))) { a.atkCd = 0.3; a.swing = 0.18; mineFloor(tx, ty, 0.35, a); return true; }
-    a.atkCd = 0.25; a.swing = 0.18;
-  }
+  if (ctrl(a)) { a.atkCd = 0.25; a.swing = 0.18; }
   return false;
+}
+// welcher abbaubare Block liegt direkt vor dem Helden? (Mauer, Holzwand, Hecke oder selbst gebaute Brücke)
+function facingBlock(a) {
+  if (!a || a.dead || a.fallT > 0) return null;
+  for (const reach of [0.75, 1.15]) {
+    const tx = Math.floor(a.x + a.fx * reach), ty = Math.floor(a.y + a.fy * reach);
+    if (tx === Math.floor(a.x) && ty === Math.floor(a.y)) continue;
+    const t = tileAt(tx, ty);
+    if (breakable(t)) return { x: tx, y: ty, floor: false };
+    if (t === 2 && S.placed[ty * MW + tx]) return { x: tx, y: ty, floor: true };
+    if (t) return null; // fester Boden davor: nichts abzubauen
+  }
+  return null;
 }
 function shootArrow(from, tgt, speed, dmg, spread) {
   const ang = Math.atan2(tgt.y - from.y, tgt.x - from.x) + (Math.random() - 0.5) * spread;
@@ -1433,7 +1455,7 @@ function render() {
     ctx.drawImage(tileTex[isWall(t) ? (t === 7 ? (S.under[y * MW + x] || 2) : t === 6 ? 4 : t === 15 ? 2 : 1) : t], x * T, y * T, T, T);
     if (t === 11) { ctx.fillStyle = `rgba(255,220,80,${0.15 + 0.15 * Math.sin(S.t * 3 + x * 0.7 + y * 0.4)})`; ctx.fillRect(x * T, y * T, T, T); }
     if (S.mapDef.deco && t === S.mapDef.deco.tile && !bedAt(x, y)) drawDeco(x, y, S.mapDef.deco);
-    if (t === 2 && wallHp[y * MW + x] !== undefined) { ctx.strokeStyle = 'rgba(0,0,0,.55)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x * T + 6, y * T + 6); ctx.lineTo(x * T + 16, y * T + 18); ctx.lineTo(x * T + 26, y * T + 10); ctx.stroke(); }
+    if (t === 2 && wallHp[y * MW + x] !== undefined) drawCracks(x * T, y * T, x, y, t);
     if (t === 10) { ctx.fillStyle = `rgba(255,255,255,${0.08 + 0.06 * Math.sin(S.t * 2 + x + y * 0.5)})`; ctx.fillRect(x * T, y * T + 10, T, 3); }
   }
   // Border-Linie
@@ -1483,6 +1505,13 @@ function render() {
   // Pfeile
   ctx.lineWidth = 2;
   for (const ar of S.arrows) { const L = Math.hypot(ar.vx, ar.vy); ctx.strokeStyle = ar.team === 'gruen' ? '#5a3a1a' : TEAMS[ar.team].dark; ctx.beginPath(); ctx.moveTo(ar.x * T, ar.y * T); ctx.lineTo((ar.x - ar.vx / L * 0.5) * T, (ar.y - ar.vy / L * 0.5) * T); ctx.stroke(); }
+  // anvisierter Block (abbaubar): weißer Rahmen
+  const fb = facingBlock(p);
+  if (fb) {
+    const lift = fb.floor ? 0 : 14;
+    ctx.strokeStyle = input.hit ? 'rgba(255,255,255,.95)' : 'rgba(255,255,255,.45)'; ctx.lineWidth = 2;
+    ctx.strokeRect(fb.x * T + 1, fb.y * T + 1 - lift, T - 2, T - 2);
+  }
   // Bau-Vorschau
   if (input.build && !p.dead) {
     const bx = Math.floor(p.x + p.fx * 0.95), by = Math.floor(p.y + p.fy * 0.95);
@@ -1531,6 +1560,18 @@ function drawDeco(x, y, d) {
     ctx.fillStyle = col === '#ffd52e' ? '#e08a00' : '#ffd52e'; ctx.fillRect(fx + sw, fy - 8, 2, 2); // Mitte
   }
 }
+// Risse wie in Minecraft: je weiter abgebaut, desto mehr Risse
+const WALL_MAX = { 6: 1.6, 7: 0.9, 14: 2.2, 2: 0.6 };
+function drawCracks(px, py, x, y, t) {
+  const hp = wallHp[y * MW + x]; if (hp === undefined) return;
+  const k = Math.max(0, Math.min(1, 1 - hp / (WALL_MAX[t] || 1)));
+  ctx.fillStyle = `rgba(0,0,0,${0.08 + k * 0.25})`; ctx.fillRect(px, py, T, T);
+  ctx.strokeStyle = 'rgba(0,0,0,.65)'; ctx.lineWidth = 2; ctx.beginPath();
+  ctx.moveTo(px + 6, py + 6); ctx.lineTo(px + 15, py + 15); ctx.lineTo(px + 11, py + 26);
+  if (k > 0.35) { ctx.moveTo(px + 15, py + 15); ctx.lineTo(px + 26, py + 10); ctx.moveTo(px + 15, py + 15); ctx.lineTo(px + 24, py + 25); }
+  if (k > 0.65) { ctx.moveTo(px + 3, py + 18); ctx.lineTo(px + 11, py + 15); ctx.moveTo(px + 20, py + 3); ctx.lineTo(px + 18, py + 12); }
+  ctx.stroke();
+}
 function drawWall(x, y, t) {
   const h = 14, px = x * T, py = y * T;
   if (t === 15) { // Palme
@@ -1550,8 +1591,7 @@ function drawWall(x, y, t) {
   ctx.fillStyle = WALL_SIDE[t]; ctx.fillRect(px, py + T - h, T, h);
   ctx.drawImage(tileTex[t], px, py - h, T, T);
   ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(px, py + T - h, T, 2);
-  const hp = wallHp[y * MW + x];
-  if (hp !== undefined) { ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(px + 6, py - h + 6); ctx.lineTo(px + 16, py - h + 16); ctx.lineTo(px + 12, py); ctx.stroke(); }
+  drawCracks(px, py - h, x, y, t);
 }
 
 function drawEnt(e) {

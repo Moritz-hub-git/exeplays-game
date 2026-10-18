@@ -152,3 +152,9 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; i
 .mpCode { font: 900 44px Impact, "Arial Black", sans-serif; letter-spacing: 10px; color: #ffd83a; text-shadow: 3px 3px 0 #000; margin: 4px 0; }
 .mpIn { flex: 0 0 90px; font: bold 22px ui-monospace, monospace; text-align: center; letter-spacing: 4px; padding: 6px; border: 3px solid #1b1b1b; background: #eee; color: #222; }
 .mpStatus { font-size: 11.5px; line-height: 1.35; margin: 6px 0 2px; color: #e6ffe0; min-height: 30px; }
+
+/* kein Doppeltipp-Zoom (iOS Safari ignoriert user-scalable=no) */
+* { touch-action: manipulation; -webkit-touch-callout: none; }
+html, body, canvas, #hud, #stick, #buttons, .btn, #mapStage { touch-action: none; }
+#menu, #shopItems, .intelBox, .bioBox, #over { touch-action: pan-y; }
+input { -webkit-user-select: text; user-select: text; touch-action: manipulation; }
