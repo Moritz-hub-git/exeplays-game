@@ -113,3 +113,14 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; i
 .gear { font-size: 9px; }
 
 #board .pg { font-size: 9.5px; color: #d7ffd0; border-top: 1px solid rgba(255,255,255,.2); margin-top: 2px; padding-top: 2px; }
+
+#board .tap { font-size: 8.5px; color: #bbb; text-align: center; margin: -1px 0 2px; }
+#intel { background: rgba(0,0,0,.55); }
+.intelBox { max-height: 90vh; overflow-y: auto; width: min(420px, 96vw); }
+.iteam { border-left: 4px solid; background: #8b8b8b; margin-bottom: 8px; padding: 4px 6px; color: #fff; text-shadow: 1px 1px 0 #3f3f3f; }
+.ith { font-weight: bold; font-size: 13px; margin-bottom: 3px; text-shadow: 1px 1px 0 #222; }
+.urow { font-size: 11px; line-height: 1.35; padding: 4px 0; border-top: 1px solid rgba(0,0,0,.2); }
+.urow.resp { color: #eee; font-style: italic; }
+.uinv { color: #fff; }
+.uact { color: #d7ffd0; }
+.uplan .ok { color: #9f9; } .uplan .no { color: #fbb; }

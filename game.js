@@ -201,7 +201,7 @@ function startGame(charKey, mapId = selectedMap) {
     spawn: { x: M.spawn[0], y: M.spawn[1] },
     shopNpc: { x: M.shop[0], y: M.shop[1] },
     gens: M.gens.map(([x, y, kind, every, cap]) => ({ x, y, kind, every, cap, t: Math.random() * every })),
-    items: [], ents: [], parts: [], floats: [], arrows: [], fields: {},
+    items: [], ents: [], parts: [], floats: [], arrows: [], fields: {}, flyers: [],
     inv: { bronze: 4, iron: 0, gold: 0, sand: 24 },
     sword: 0, armor: 0, bow: 0, apples: 0, appleT: 0, shader: false,
     kills: 0, deaths: 0, bedsBroken: 0, fallsP: 0, goldSnacked: 0, cheese: 0, lost: 0,
@@ -350,7 +350,7 @@ function feed(html) {
   while (f.children.length > 4) f.firstChild.remove();
   setTimeout(() => d.remove(), 6200);
 }
-function floatText(x, y, text, col = '#fff') { S.floats.push({ x, y, text, col, t: 1 }); }
+function floatText(x, y, text, col = '#fff', small = false) { S.floats.push({ x, y, text, col, t: 1, small }); }
 
 let lastHud = '';
 function updateHud(force) {
@@ -369,8 +369,7 @@ function updateHud(force) {
     const b = S.beds[k];
     const alive = S.ents.filter(e => e.team === k && !e.dead).length;
     const mark = b.alive ? '✔' : (alive ? alive : '✘');
-    const tg = teamGear(k);
-    const gear = k === 'gruen' ? '' : `<span class="gear">${tg.sword ? '⚔' + tg.sword : ''}${tg.armor ? '🛡' : ''}${tg.bow ? '🏹' : ''}</span>`;
+    const gear = '';
     html += `<div><span style="color:${TEAMS[k].col}">■</span> ${TEAMS[k].name}${k === 'gruen' ? ' (Du)' : ''} ${gear}<b style="float:right;margin-left:6px;color:${b.alive ? '#5f5' : '#f55'}">${mark}</b></div>`;
   }
   const pt = S.partner;
@@ -437,7 +436,6 @@ function tnt() {
 
 // ---------- Einheiten: eigenes Inventar, eigener Shop, Taktik ----------
 // Gegner und Partner sammeln Ressourcen selbst ein, kaufen davon Ausrüstung und verlieren beim Tod alles.
-const ROLE_ICON = { farmer: '🌾', rusher: '⚡', hunter: '🎯', gold: '💰', guard: '🛡' };
 function freshGear(u) { u.inv = freshInv(); u.sword = 0; u.armor = 0; u.bow = 0; }
 function nearestWalkable(x, y, maxR = 3) {
   for (let r = 0; r <= maxR; r += 0.5) for (let a = 0; a < 16; a++) {
@@ -466,16 +464,6 @@ function teamGear(k) {
   const us = k === 'gruen' ? [S.partner] : S.ents.filter(e => e.kind === 'enemy' && e.team === k && !e.dead);
   return { sword: Math.max(0, ...us.map(u => u.sword)), armor: us.some(u => u.armor), bow: us.some(u => u.bow), n: us.length };
 }
-function pickRole(team) {
-  const mates = S.ents.filter(e => e.kind === 'enemy' && e.team === team && !e.dead);
-  if (S.beds[team].alive && !mates.some(m => m.role === 'guard')) return 'guard';
-  const hasGold = S.gens.some(g => g.kind === 'gold' && !g.team);
-  const r = Math.random();
-  if (r < 0.4) return 'rusher';
-  if (r < 0.6) return 'hunter';
-  if (r < 0.8 && hasGold) return 'gold';
-  return 'farmer';
-}
 function mkEnemy(team) {
   const st = S.ai.strength, hp = Math.round(14 * st + S.wave);
   const skinKey = 'en_' + team + '_' + ((Math.random() * 4) | 0);
@@ -486,30 +474,52 @@ function mkEnemy(team) {
     shotCd: 1, thinkT: 0, strafeT: 0, strafeDir: 1, state: 'idle', goal: null, target: null, pushing: false, lastHurt: -99 };
   freshGear(u);
   u.inv.bronze = 4; // wie im echten Bedwars: fast nichts in der Tasche
-  u.role = pickRole(team);
   return u;
 }
 // nächster sinnvoller Einkauf (Blöcke, Schwert, Rüstung, Bogen)
-function shopWish(u) {
-  if (S.void && u.inv.sand < 24 && u.inv.bronze >= 4) return { p: { bronze: 4 }, f: () => (u.inv.sand += 16), n: '16 Blöcke', quiet: true };
-  const sp = SWORD_PRICES[u.sword]; if (sp && canPay(sp, u.inv) && !((u.role === 'guard' || u === S.partner) && u.sword >= 2)) return { p: sp, f: () => u.sword++, n: () => SWORDS[u.sword].name };
-  if (!u.armor && u.inv.iron >= 10) return { p: { iron: 10 }, f: () => (u.armor = 1), n: 'Kettenrüstung' };
-  if (u.kind === 'enemy' && !u.bow && S.t >= S.ai.bowAfter && u.inv.gold >= 3) return { p: { gold: 3 }, f: () => (u.bow = 1), n: 'einen Bogen' };
+// Einkaufsplan: gleiche Preise wie im Shop des Spielers
+function planNext(u) {
+  if (S.void && u.inv.sand < 24) return { p: { bronze: 4 }, f: () => (u.inv.sand += 16), n: '16 Blöcke', ic: '🧱', quiet: true };
+  if (u.sword < 3 && !(u === S.partner && u.sword >= 2)) { const nm = SWORDS[u.sword + 1].name; return { p: SWORD_PRICES[u.sword], f: () => u.sword++, n: nm, ic: '⚔️' }; }
+  if (!u.armor) return { p: { iron: 10 }, f: () => (u.armor = 1), n: 'Kettenrüstung', ic: '🛡️' };
+  if (u.kind === 'enemy' && !u.bow && S.t >= S.ai.bowAfter) return { p: { gold: 3 }, f: () => (u.bow = 1), n: 'Bogen', ic: '🏹' };
   return null;
 }
-function tryShop(u) {
-  const dl = S.dealers[u.team]; if (!dl || dist(u, dl) > 2.4) return false;
-  let bought = false;
-  for (let i = 0; i < 4; i++) {
-    const w = shopWish(u); if (!w) break;
-    pay(w.p, u.inv); w.f(); bought = true;
-    if (!w.quiet) {
-      const col = u.kind === 'hero' ? '#fff' : TEAMS[u.team].col;
-      feed(`<span class="tag">[Shop]</span> <b style="color:${col}">${u.name}</b> kauft ${val(w.n)}.`);
-      if (u.kind === 'hero' && Math.random() < 0.5) say(u, `Ich hab mir ${val(w.n)} gegönnt!`);
-    }
+// nächster Kauf, den die Einheit sich JETZT leisten kann
+function shopWish(u) {
+  const plan = planNext(u);
+  if (plan && canPay(plan.p, u.inv)) return plan;
+  // Blöcke sind voll genug? Dann ggf. das nächste leistbare Upgrade
+  if (plan && plan.ic === '🧱' && u.inv.sand >= 8) {
+    const sw = u.sword < 3 && !(u === S.partner && u.sword >= 2) ? { p: SWORD_PRICES[u.sword], f: () => u.sword++, n: SWORDS[u.sword + 1].name, ic: '⚔️' } : null;
+    if (sw && canPay(sw.p, u.inv)) return sw;
+    if (!u.armor && u.inv.iron >= 10) return { p: { iron: 10 }, f: () => (u.armor = 1), n: 'Kettenrüstung', ic: '🛡️' };
   }
-  return bought;
+  return null;
+}
+function missing(p, inv) { const m = {}; for (const k in p) if ((inv[k] || 0) < p[k]) m[k] = p[k] - (inv[k] || 0); return m; }
+// Einkaufen dauert sichtbar: Einheit bleibt stehen, sagt was sie kauft, Ressourcen fliegen zum Dealer
+function tryShop(u, dt) {
+  const dl = S.dealers[u.team];
+  if (!dl || dist(u, dl) > 2.4) { u.buyT = 0; u.buying = null; return false; }
+  const w = u.buying || shopWish(u);
+  if (!w) { u.buying = null; return false; }
+  u.vx = u.vy = 0; u.dir = dl.x >= u.x ? 1 : -1;
+  if (!u.buying) { u.buying = w; u.buyT = 0; dl.talkT = 1.3; if (u.kind === 'hero') say(u, `Kaufe ${w.n} für ${priceStr(w.p)}`, 1.3); }
+  u.buyT += dt;
+  if (u.buyT < 1.0) return true;
+  u.buying = null; u.buyT = 0;
+  if (!canPay(w.p, u.inv)) return true;
+  pay(w.p, u.inv); w.f();
+  for (const [k, v] of Object.entries(w.p)) for (let n = 0; n < Math.min(v, 8); n++)
+    S.flyers.push({ x: u.x, y: u.y - 0.7, to: dl, t: -n * 0.05, d: 0.4, kind: k });
+  const col = u.kind === 'hero' ? '#fff' : TEAMS[u.team].col;
+  floatText(u.x, u.y - 2.1, u.kind === 'hero' ? `${w.ic} ${w.n}` : '🛒', col);
+  if (!w.quiet && u.kind === 'hero') {
+    feed(`<span class="tag">[Shop]</span> <b style="color:${col}">${u.name}</b> kauft ${w.n} (${priceStr(w.p)}).`);
+    if (u.kind === 'hero' && Math.random() < 0.5) setTimeout(() => say(u, `Ich hab mir ${w.n} gegönnt!`), 300);
+  }
+  return true;
 }
 function nearestItem(u, pred, maxD) {
   let best = null, bd = maxD;
@@ -534,63 +544,126 @@ function flankPoint(u) {
   return { x: Math.max(2, Math.min(MW - 3, mx + Math.cos(a) * off)), y: Math.max(2, Math.min(MH - 3, my + Math.sin(a) * off)) };
 }
 
-// Gegner denkt nach: Rückzug, Verteidigen, Kämpfen, Einkaufen, Farmen oder Rolle ausführen
+// Gegner entscheidet laufend, was in der aktuellen Lage am meisten Sinn ergibt (keine festen Rollen)
 function enemyThink(u) {
   const k = u.team, bed = S.beds[k], home = bedFront(k, 1.6);
+  const hostiles = hostilesOf(u);
   let tgt = null, td = Infinity;
-  for (const h of hostilesOf(u)) { const d = dist(h, u); if (d < td) { td = d; tgt = h; } }
+  for (const h of hostiles) { const d = dist(h, u); if (d < td) { td = d; tgt = h; } }
   u.target = null;
-  // 1. Rückzug zum Heilen
+  const mates = S.ents.filter(m => m !== u && m.kind === 'enemy' && m.team === k && !m.dead);
+  // 1. Wenig Leben: zurück zum Bett und heilen
   if (u.hp < u.max * 0.35 && bed.alive && !(tgt && td < 1.4)) {
     if (u.state !== 'retreat') say(u, ['Rückzug!', 'Ich muss heilen!', 'Ich bin gleich down!'][(Math.random() * 3) | 0]);
-    u.state = 'retreat'; u.pushing = false; u.goal = home; return;
+    u.state = 'retreat'; u.pushing = false; u.plan = null; u.goal = home; return;
   }
   if (u.state === 'retreat' && u.hp < u.max * 0.85 && bed.alive) { u.goal = home; return; }
-  // 2. Eigenes Bett wird angegriffen
-  if (bed.alive && (S.bedAlert[k] ?? -99) > S.t - 6 && dist(u, home) < 18 && !u.pushing) {
-    if (tgt && dist(tgt, home) < 7) { u.state = 'fight'; u.target = tgt; return; }
-    u.state = 'defend'; u.goal = home; return;
+  // 2. Gefahr am eigenen Bett: verteidigen (aber nicht alle, wenn schon genug zu Hause sind)
+  if (bed.alive) {
+    const threats = hostiles.filter(h => dist(h, home) < 8).sort((a, b) => dist(a, u) - dist(b, u));
+    const alert = (S.bedAlert[k] ?? -99) > S.t - 6;
+    if ((threats.length || alert) && dist(u, home) < 22) {
+      const defenders = mates.filter(m => dist(m, home) < 8 && m.state !== 'retreat').length;
+      if (defenders < Math.max(1, threats.length) || dist(u, home) < 8) {
+        u.pushing = false; u.plan = null;
+        if (threats[0]) { u.state = 'fight'; u.target = threats[0]; return; }
+        u.state = 'defend'; u.goal = home; return;
+      }
+    }
   }
-  // 3. Held in der Nähe: kämpfen
-  const aggro = u.role === 'guard' ? (tgt && dist(tgt, home) < 7 ? 8 : 0) : u.bow ? 7.5 : u.role === 'hunter' ? 9 : 5;
-  if (tgt && td < aggro && walkable(tileAt(tgt.x, tgt.y))) { u.state = 'fight'; u.target = tgt; return; }
-  // 4. Einkaufen, wenn sich was lohnt
+  // 3. Gegner in der Nähe: kämpfen (Bogenschützen schon aus größerer Entfernung)
+  if (tgt && td < (u.bow ? 7.5 : 5) && walkable(tileAt(tgt.x, tgt.y))) { u.state = 'fight'; u.target = tgt; return; }
+  // 4. Einkaufen, wenn sich etwas leisten lässt und der Dealer nicht zu weit ist
   const wish = shopWish(u), wealth = u.inv.bronze + u.inv.iron * 3 + u.inv.gold * 6;
   if (u.state === 'shop') u.shopTries = (u.shopTries || 0) + 1; else u.shopTries = 0;
-  if (wish && u.shopTries < 40 && (dist(u, home) < 6 || u.role === 'farmer' || wealth >= 14) && !u.pushing) { u.state = 'shop'; u.goal = S.dealers[k]; return; }
-  // 5. Rolle
-  let role = u.role;
-  if (S.void && role !== 'guard' && role !== 'farmer' && u.inv.sand < 8 && !u.pushing) role = 'farmer';
-  if (role === 'farmer') {
-    if (u.role === 'farmer' && (!S.void || u.inv.sand >= 16) && u.sword >= Math.min(2, Math.floor(S.t / 100))) u.role = pickRole(k);
+  if (wish && u.shopTries < 40 && !u.pushing && (dist(u, home) < 8 || wealth >= 14)) { u.state = 'shop'; u.goal = S.dealers[k]; return; }
+  // 5. Plan wählen oder weiterverfolgen
+  if (!u.plan || S.t > u.plan.until || !planValid(u)) choosePlan(u, mates, home);
+  runPlan(u, tgt, mates, home);
+}
+function planValid(u) {
+  const p = u.plan;
+  if (p.act === 'attack') return S.beds[p.team] && S.beds[p.team].alive && (!S.void || u.inv.sand > 2 || u.pushing);
+  if (p.act === 'gold') return !S.void || u.inv.sand > 2;
+  return true;
+}
+function teamPower(u) { return 1 + u.sword + (u.armor ? 1 : 0) + (u.bow ? 0.5 : 0) + u.hp / u.max; }
+function choosePlan(u, mates, home) {
+  const k = u.team, needSand = S.void ? 10 : 0, opts = [];
+  const geared = u.sword >= Math.min(1, Math.floor(S.t / 50)) || (u.armor && u.sword >= 1);
+  const noise = () => Math.random() * 0.8;
+  // Farmen: wer keine Blöcke oder schlechte Ausrüstung hat
+  const ownItems = S.items.filter(i => i.gen && i.gen.team === k).length;
+  // wer lange gefarmt hat, will irgendwann los
+  opts.push({ act: 'farm', s: (u.inv.sand < needSand ? 3 : 0) + (geared ? 0 : 2) + ownItems * 0.08 - (u.farmTime || 0) / 25 + noise() });
+  // Gold aus der Mitte: lohnt sich, wenn dort Gold liegt und es ruhig ist
+  const goldGen = S.gens.find(g => g.kind === 'gold' && !g.team && walkable(tileAt(g.x, g.y)));
+  if (goldGen && u.inv.sand >= needSand) {
+    const crowd = hostilesOf(u).filter(h => dist(h, goldGen) < 5).length;
+    const lying = S.items.filter(i => !i.gen.team && dist(i, goldGen) < 2).length;
+    const maxed = u.sword >= 2 && u.armor;
+    opts.push({ act: 'gold', s: 0.8 + Math.min(lying, 3) * 0.3 + (u.sword < 2 ? 0.5 : 0) - (maxed ? 1.5 : 0) - crowd * 1.2 - (u.goldTime || 0) / 30 + noise() });
+  }
+  // Bett angreifen: wo es sich gerade lohnt (angeschlagen, schlecht bewacht, nah)
+  if (u.inv.sand >= needSand) {
+    let bestT = null, bestS = -9;
+    for (const t of S.allTeams) {
+      if (t === k || !S.beds[t].alive) continue;
+      const b = S.beds[t], bp = { x: b.x + 0.5, y: b.y + 1 };
+      const guards = S.ents.filter(e => e.team === t && !e.dead && dist(e, bp) < 7).length;
+      const sc = (1 - b.hp / b.max) * 2.5 + (guards === 0 ? 1.5 : -guards * 0.5) + (t === 'gruen' ? 0.6 : 0) - dist(u, bp) / 30;
+      if (sc > bestS) { bestS = sc; bestT = t; }
+    }
+    if (bestT) opts.push({ act: 'attack', team: bestT, s: (geared ? 1.6 : 0.3) + bestS + mates.filter(m => m.plan && m.plan.act === 'attack').length * 0.4 + noise() });
+  }
+  // Jagen: Spieler ist in der Nähe der eigenen Basis oder schwächer ausgerüstet
+  const p = S.player;
+  if (!p.dead) {
+    const pPow = 1 + S.sword + (S.armor ? 1 : 0) + p.hp / p.max;
+    const nearBase = dist(p, home) < 12;
+    opts.push({ act: 'hunt', s: (nearBase ? 1.8 : 0) + (teamPower(u) > pPow ? 1.2 : -0.5) + (!S.beds.gruen.alive ? 2.5 : 0) - dist(u, p) / 25 + noise() });
+  }
+  // Zuhause aufpassen, wenn sonst niemand da ist
+  if (S.beds[k].alive) {
+    const atHome = mates.filter(m => dist(m, home) < 6).length;
+    opts.push({ act: 'guard', s: (atHome === 0 && mates.length >= 1 ? 2.2 : 0.2) + noise() });
+  }
+  opts.sort((a, b) => b.s - a.s);
+  const best = opts[0];
+  u.plan = { ...best, until: S.t + 6 + Math.random() * 6 };
+  if (best.act !== 'attack') { u.pushing = false; u.rallyUntil = 0; u.wp = null; }
+  else u.targetTeam = best.team;
+}
+function runPlan(u, tgt, mates, home) {
+  const k = u.team, act = u.plan.act;
+  if (act !== 'farm') u.farmTime = 0;
+  if (act === 'farm') {
+    u.farmTime = (u.farmTime || 0) + 0.5;
     const it = nearestItem(u, i => i.gen && i.gen.team === k, 14);
     const g = teamGen(k);
     u.state = 'farm'; u.goal = it || (g ? { x: g.x, y: g.y + 0.3 } : home); return;
   }
-  if (role === 'guard') {
+  if (act === 'guard') {
     const it = nearestItem(u, i => i.gen && i.gen.team === k, 4);
     u.state = 'guard'; u.goal = it || { x: home.x + Math.sin(S.t * 0.7 + u.x) * 1.2, y: home.y + Math.cos(S.t * 0.5) * 0.8 }; return;
   }
-  if (role === 'gold') {
-    if (u.inv.gold >= 4 && wish) { u.state = 'shop'; u.goal = S.dealers[k]; return; }
+  if (act !== 'gold') u.goldTime = 0;
+  if (act === 'gold') {
+    u.goldTime = (u.goldTime || 0) + 0.5;
     const it = nearestItem(u, i => !i.gen.team && i.kind !== 'bronze', 30);
     const g = S.gens.find(x => x.kind === 'gold' && !x.team);
-    if (!g) { u.role = 'rusher'; return; }
-    u.state = 'gold'; u.goal = it || g; return;
+    u.state = 'gold'; u.goal = it || g || home; return;
   }
-  if (role === 'hunter') { u.state = 'hunt'; u.goal = tgt || S.player; return; }
-  // Rusher: Ziel-Team wählen (alle Teams, Grün etwas bevorzugt), sammeln, gemeinsam los, manchmal über die Flanke
-  if (u.targetTeam && !S.beds[u.targetTeam].alive) { u.targetTeam = null; u.pushing = false; }
-  if (!u.targetTeam) u.targetTeam = pickTargetTeam(u);
-  if (!u.targetTeam) { u.state = 'hunt'; u.goal = tgt || S.player; return; }
+  if (act === 'hunt') { u.state = 'hunt'; u.goal = (!S.player.dead ? S.player : tgt) || home; return; }
+  // Angriff: kurz sammeln, gemeinsam los, manchmal über die Flanke
   if (!u.pushing) {
-    const mates = S.ents.filter(m => m !== u && m.team === k && !m.dead && m.role === 'rusher' && m.state === 'rally');
-    if (!u.rallyUntil) { u.rallyUntil = S.t + 5 + Math.random() * 4; say(u, 'Sammeln! Wir greifen zusammen an.'); }
-    if (S.t < u.rallyUntil && mates.length < 1) { u.state = 'rally'; u.goal = bedFront(k, 3.2); return; }
-    u.pushing = true; u.rallyUntil = 0;
-    say(u, ['Los, Angriff!', `Auf das Bett von ${TEAMS[u.targetTeam].name}!`, 'Jetzt! Zange!'][(Math.random() * 3) | 0]);
+    const ready = mates.filter(m => m.state === 'rally' && m.plan && m.plan.team === u.plan.team);
+    if (!u.rallyUntil) { u.rallyUntil = S.t + 3 + Math.random() * 3; if (mates.length) say(u, 'Sammeln! Wir greifen zusammen an.'); }
+    if (S.t < u.rallyUntil && ready.length < 1 && mates.length) { u.state = 'rally'; u.goal = bedFront(k, 3.2); return; }
+    u.pushing = true; u.rallyUntil = 0; u.plan.until = S.t + 40;
+    say(u, ['Los, Angriff!', `Auf das Bett von ${TEAMS[u.plan.team].name}!`, 'Jetzt! Zange!'][(Math.random() * 3) | 0]);
     if (Math.random() < 0.5 && (!S.void || u.inv.sand >= 16)) u.wp = flankPoint(u);
-    for (const m of mates) { m.pushing = true; m.rallyUntil = 0; m.wp = null; m.targetTeam = u.targetTeam; }
+    for (const m of ready) { m.pushing = true; m.rallyUntil = 0; m.wp = null; m.targetTeam = u.plan.team; m.plan.until = S.t + 40; }
   }
   if (u.wp && dist(u, u.wp) < 1.5) u.wp = null;
   u.state = 'push'; u.goal = u.wp || null;
@@ -600,7 +673,7 @@ function enemyAI(e, dt) {
   if (e.dead || e.fallT > 0) return;
   e.shotCd -= dt; e.thinkT -= dt;
   if (e.thinkT <= 0) { e.thinkT = 0.35 + Math.random() * 0.3; enemyThink(e); }
-  if (e.state === 'shop' && tryShop(e)) e.thinkT = 0;
+  if (e.state === 'shop') { if (tryShop(e, dt)) return; e.thinkT = Math.min(e.thinkT, 0.1); }
   if (e.state === 'fight' && e.target && !e.target.dead) return combat(e, e.target, dt);
   if (e.state === 'push' && !e.goal && e.targetTeam) {
     const tk = e.targetTeam, bed = S.beds[tk];
@@ -707,7 +780,7 @@ function partnerThink(a) {
   if (!bed.alive) { a.state = 'escort'; a.goal = { x: p.x - 1, y: p.y + 0.5 }; return; }
   // farmen, wenn genug rumliegt und der Spieler nicht selbst gerade sammelt
   const broke = a.sword === 0 || (S.void && a.inv.sand < 8);
-  const it = nearestItem(a, i => i.gen && i.gen.team === 'gruen' && dist(p, i) > (broke ? 1.2 : 3), 14);
+  const it = nearestItem(a, i => i.gen && i.gen.team === 'gruen' && (broke || dist(p, i) > 3), 14);
   const pile = S.items.filter(i => i.gen && i.gen.team === 'gruen').length;
   if (it && (pile >= 4 || broke || !S.void)) { a.state = 'farm'; a.goal = it; return; }
   a.state = 'guard'; a.goal = { x: home.x + Math.sin(S.t * 0.4) * 1.2, y: home.y };
@@ -715,7 +788,7 @@ function partnerThink(a) {
 function partnerAI(a, dt) {
   if (a.dead || a.fallT > 0) return;
   a.thinkT -= dt; if (a.thinkT <= 0) { a.thinkT = 0.3; partnerThink(a); }
-  if (a.state === 'shop' && tryShop(a)) a.thinkT = 0;
+  if (a.state === 'shop') { if (tryShop(a, dt)) return; a.thinkT = Math.min(a.thinkT, 0.1); }
   if (a.state === 'fight' && a.target && !a.target.dead) return combat(a, a.target, dt);
   moveToGoal(a, dt);
 }
@@ -840,7 +913,7 @@ function destroyBed(k, by) {
     feed(`<span class="tag">[BedWars]</span> <b style="color:${TEAMS.gruen.col}">Euer Bett</b> wurde von ${byName} zerstört! Kein Respawn mehr!`);
   } else {
     if (by && by.team === 'gruen') S.bedsBroken++;
-    for (const g of S.ents) if (g.kind === 'enemy' && g.team === k && !g.dead && g.role === 'guard') { g.role = 'hunter'; say(g, 'NEIN! Mein Bett!'); }
+    for (const g of S.ents) if (g.kind === 'enemy' && g.team === k && !g.dead && dist(g, bedFront(k, 0)) < 8) { say(g, 'NEIN! Mein Bett!'); g.plan = null; }
     feed(`<span class="tag">[BedWars]</span> Das Bett von Team <b style="color:${TEAMS[k].col}">${TEAMS[k].name}</b> wurde von <b>${byName}</b> zerstört!`);
     if (by && by.team !== 'gruen') setTimeout(() => say(S.partner, `Team ${TEAMS[by.team].name} räumt auf! Gut für uns.`), 600);
     if (by && by.team === 'gruen') {
@@ -956,7 +1029,10 @@ function update(dt) {
     }
     for (const u of S.ents) {
       if (u === p || u.dead || u.fallT > 0 || Math.hypot(it.x - u.x, it.y - u.y) >= 0.8) continue;
-      u.inv[it.kind]++; S.items.splice(i, 1); break;
+      u.inv[it.kind]++; S.items.splice(i, 1);
+      S.flyers.push({ x: it.x, y: it.y, to: u, t: 0, d: 0.25, kind: it.kind });
+      if (u.kind === 'hero') floatText(u.x + 0.3, u.y - 1.5, '+1 ' + RES_ICON[it.kind], '#fff', true);
+      break;
     }
   }
   // Pfeile (vom Spieler und von Gegner-Bogenschützen)
@@ -981,6 +1057,9 @@ function update(dt) {
   // Partikel
   for (const q of S.parts) { q.x += q.vx * dt; q.y += q.vy * dt; q.vy += 6 * dt; q.t -= dt; }
   S.parts = S.parts.filter(q => q.t > 0);
+  for (const f of S.flyers) f.t += dt;
+  S.flyers = S.flyers.filter(f => f.t < f.d);
+  for (const d of Object.values(S.dealers)) if (d.talkT > 0) d.talkT -= dt;
   for (const f of S.floats) { f.y -= dt * 0.8; f.t -= dt; }
   S.floats = S.floats.filter(f => f.t > 0);
   S.shake = Math.max(0, S.shake - dt);
@@ -1182,8 +1261,16 @@ function render() {
   }
   // Partikel
   for (const q of S.parts) { ctx.fillStyle = q.col; ctx.fillRect(q.x * T, q.y * T, q.s, q.s); }
-  ctx.textAlign = 'center'; ctx.font = 'bold 11px monospace';
-  for (const f of S.floats) { ctx.globalAlpha = Math.min(1, f.t * 2); ctx.fillStyle = '#000'; ctx.fillText(f.text, f.x * T + 1, f.y * T + 1); ctx.fillStyle = f.col; ctx.fillText(f.text, f.x * T, f.y * T); }
+  const RES_COL = { bronze: '#c0773a', iron: '#e6e6e6', gold: '#ffd83a' };
+  for (const f of S.flyers) {
+    if (f.t < 0) continue;
+    const k = f.t / f.d, tx = f.to.x, ty = f.to.y - 0.7;
+    const x = f.x + (tx - f.x) * k, y = f.y + (ty - f.y) * k - Math.sin(k * Math.PI) * 0.6;
+    ctx.fillStyle = RES_COL[f.kind]; ctx.fillRect(x * T - 4, y * T - 4, 8, 7);
+    ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(x * T - 4, y * T + 2, 8, 1);
+  }
+  ctx.textAlign = 'center';
+  for (const f of S.floats) { ctx.font = f.small ? 'bold 9px monospace' : 'bold 11px monospace'; ctx.globalAlpha = Math.min(1, f.t * 2); ctx.fillStyle = '#000'; ctx.fillText(f.text, f.x * T + 1, f.y * T + 1); ctx.fillStyle = f.col; ctx.fillText(f.text, f.x * T, f.y * T); }
   ctx.globalAlpha = 1;
   for (const e of list) if (e.bubble) drawBubble(e);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1239,10 +1326,18 @@ function drawEnt(e) {
   ctx.restore();
   if (e.fallT > 0) return;
   ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
-  const label = e.name + (e.kind === 'enemy' ? ' ' + (ROLE_ICON[e.role] || '') + (S.void && e.inv.sand > 0 ? ` 🧱${e.inv.sand}` : '') : '');
+  const label = e.name;
   const w = ctx.measureText(label).width + 6;
   ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(x - w / 2, y - 56, w, 11);
   ctx.fillStyle = e.kind === 'hero' ? '#fff' : TEAMS[e.team].col; ctx.fillText(label, x, y - 47.5);
+  if (e === S.partner && dist(e, S.player) < 8) {
+    ctx.font = 'bold 8px monospace';
+    const inv = `🟫${e.inv.bronze} ⬜${e.inv.iron} 🟨${e.inv.gold}${S.void ? ' 🧱' + e.inv.sand : ''}`;
+    const iw = ctx.measureText(inv).width + 6;
+    ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(x - iw / 2, y + 4, iw, 10);
+    ctx.fillStyle = '#fff'; ctx.fillText(inv, x, y + 12);
+    ctx.font = 'bold 9px monospace';
+  }
   if (e.hp < e.max) {
     ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fillRect(x - 12, y - 61, 24, 4);
     ctx.fillStyle = '#e33'; ctx.fillRect(x - 12, y - 61, 24 * Math.max(0, e.hp / e.max), 4);
@@ -1259,6 +1354,11 @@ function drawVillager(x, y, team = 'gruen') {
   ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(x - 22, y - 56, 44, 11);
   ctx.fillStyle = team === 'gruen' ? '#ffd83a' : TEAMS[team].col; ctx.fillText('DEALER', x, y - 47.5);
+  const d = S.dealers[team];
+  if (d && d.talkT > 0) { // offene Shop-Kiste
+    ctx.fillStyle = '#8a5a2b'; ctx.fillRect(x + 10, y - 30, 16, 12); ctx.fillStyle = '#c6c6c6'; ctx.fillRect(x + 10, y - 34, 16, 4);
+    ctx.fillStyle = '#ffd83a'; ctx.fillRect(x + 16, y - 26, 4, 3);
+  }
 }
 function drawBubble(e) {
   const x = e.x * T, y = e.y * T - 66;

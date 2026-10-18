@@ -61,7 +61,7 @@ const MAPS = {
         enemyTeams: ['rot'],
         beds: { gruen: [C, C + 15, 80], rot: [C, C - 16, 90] },
         spawn: [C + 0.5, C + 13.5], shop: [C - 2.5, C + 14.5],
-        gens: [[C + 2.5, C + 15.5, 'bronze', 0.9, 16], [C + 2.5, C + 15.5, 'iron', 5, 12], [C - 6.5, C + 0.5, 'iron', 4, 6], [C + 7.5, C + 0.5, 'iron', 4, 6], [C + 0.5, C + 0.5, 'gold', 5, 8]],
+        gens: [[C + 2.5, C + 15.5, 'bronze', 0.9, 16], [C + 2.5, C + 15.5, 'iron', 5, 12], [C - 6.5, C + 0.5, 'iron', 4, 6], [C + 7.5, C + 0.5, 'iron', 4, 6], [C + 0.5, C + 0.5, 'gold', 9, 5]],
         ai: { strength: 1.15, roster: 2, maxRoster: 4, bowAfter: 0 },
       };
     },
