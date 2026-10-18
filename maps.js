@@ -38,7 +38,7 @@ function pentagon(r) { return ['gruen', 'rot', 'blau', 'gelb', 'lila'].map((k, i
 const MAPS = {
   // ------------------------------------------------------------ Inselwelt
   insel: {
-    name: 'Inselwelt', ep: 'Bedwars #1', theme: { bg: ['#7fb6ea', '#bfe0fb'], clouds: true },
+    name: 'Inselwelt', ep: 'Bedwars #1', theme: { bg: ['#7fb6ea', '#bfe0fb'], clouds: true }, deco: { tile: 1, density: 0.32, grass: 0.25, cols: ['#e53935', '#ffd52e', '#ffffff', '#ffd52e'] },
     desc: 'Der Klassiker: Inseln im Void, Gold in der Mitte. Brücken bauen, Gegner runterhauen.',
     build() {
       const { m, set, island } = mapTools(); const C = C0;
@@ -50,7 +50,7 @@ const MAPS = {
   },
   // ------------------------------------------------------------ Brückenstern
   stern: {
-    name: 'Brückenstern', ep: 'Bedwars #8', theme: { bg: ['#f3a37a', '#ffd9a8'], clouds: true },
+    name: 'Brückenstern', ep: 'Bedwars #8', theme: { bg: ['#f3a37a', '#ffd9a8'], clouds: true }, deco: { tile: 1, density: 0.3, grass: 0.2, cols: ['#ff8a3d', '#ff7eb6', '#ffffff', '#ffb347'] },
     desc: 'Fünf Inseln, verbunden nur durch 1-Block-Brücken zur Mitte und zum Nachbarn. Ein Treffer und du fliegst.',
     build() {
       const { m, set, island, line } = mapTools(); const C = C0;
@@ -63,7 +63,7 @@ const MAPS = {
   },
   // ------------------------------------------------------------ Loldorf
   dorf: {
-    name: 'Das Loldorf', ep: 'Minecraft Leben #4', theme: { bg: ['#2f6b28', '#244f20'], clouds: false },
+    name: 'Das Loldorf', ep: 'Minecraft Leben #4', theme: { bg: ['#2f6b28', '#244f20'], clouds: false }, deco: { tile: 1, density: 0.45, grass: 0.35, cols: ['#e53935', '#ffd52e', '#3d6df2', '#ff7eb6', '#ffffff', '#b44ce0'] },
     desc: 'Kein Void! Jedes Team wohnt in einem Haus. Mauern vor die Tür bauen, Gegner reißen sie ein. Wo ist mein Haus??',
     build() {
       const { m, set, get, rect } = mapTools(); const C = C0;
@@ -95,7 +95,7 @@ const MAPS = {
   },
   // ------------------------------------------------------------ Riesen-Insel
   riesen: {
-    name: 'Riesen-Insel', ep: 'Special', theme: { bg: ['#6fa8dc', '#cfe8ff'], clouds: true },
+    name: 'Riesen-Insel', ep: 'Special', theme: { bg: ['#6fa8dc', '#cfe8ff'], clouds: true }, deco: { tile: 1, density: 0.3, grass: 0.3, cols: ['#4a7cff', '#6f9bff', '#ffffff', '#ffd52e'] },
     desc: 'Eine einzige riesige Insel für alle. Kein Bridgen nötig, dafür überall Kämpfe.',
     build() {
       const { m, set, disc } = mapTools(); const C = C0; const r = rng(4242);
@@ -107,7 +107,7 @@ const MAPS = {
   },
   // ------------------------------------------------------------ TukTukIsland
   tuktuk: {
-    name: 'TukTukIsland', ep: 'Bedwars #2', theme: { bg: ['#53c7e8', '#1b88b5'], clouds: true },
+    name: 'TukTukIsland', ep: 'Bedwars #2', theme: { bg: ['#53c7e8', '#1b88b5'], clouds: true }, deco: { tile: 2, density: 0.1, kind: 'shell', cols: ['#ffffff', '#ffb3c7', '#ff8a3d'] },
     desc: 'Tropische Sandinseln mit Palmen in einer Lagune. Durchs Wasser kommt man überall hin, aber nur langsam.',
     build() {
       const { m, set, get, disc } = mapTools(); const C = C0; const r = rng(777);
@@ -130,7 +130,7 @@ const MAPS = {
   },
   // ------------------------------------------------------------ Käse
   kaese: {
-    name: 'Käse', ep: 'Blockgehustled #2', theme: { bg: ['#ffcf70', '#ff9f40'], clouds: true },
+    name: 'Käse', ep: 'Blockgehustled #2', theme: { bg: ['#ffcf70', '#ff9f40'], clouds: true }, deco: null,
     desc: 'Ein riesiger Käse voller Löcher ins Void. Wer zu nah am Loch kämpft, ist ungehusstled.',
     build() {
       const { m, rect, disc } = mapTools(); const C = C0; const r = rng(9001);
@@ -148,7 +148,7 @@ const MAPS = {
   },
   // ------------------------------------------------------------ Netherfestung
   nether: {
-    name: 'Netherfestung', ep: 'neu', theme: { bg: ['#4a0d0d', '#140303'], clouds: false, lava: true },
+    name: 'Netherfestung', ep: 'neu', theme: { bg: ['#4a0d0d', '#140303'], clouds: false, lava: true }, deco: { tile: 13, density: 0.12, kind: 'shroom', cols: ['#d32f2f', '#8d5a3b'] },
     desc: 'Lavaflüsse verbinden die Basen: der schnellste Weg, aber er brennt. Wer sicher will, baut Brücken über das Void.',
     build() {
       const { m, set, island, line } = mapTools(); const C = C0;
@@ -162,7 +162,7 @@ const MAPS = {
   },
   // ------------------------------------------------------------ Heckenlabyrinth
   labyrinth: {
-    name: 'Heckenlabyrinth', ep: 'neu', theme: { bg: ['#1f4d1c', '#173a15'], clouds: false },
+    name: 'Heckenlabyrinth', ep: 'neu', theme: { bg: ['#1f4d1c', '#173a15'], clouds: false }, deco: { tile: 1, density: 0.28, grass: 0.15, cols: ['#c62828', '#ffffff', '#b39ddb', '#c62828'] },
     desc: 'Ein Irrgarten aus Hecken, kein Void. Wer den Weg nicht kennt, haut sich einfach durch die Hecke.',
     build() {
       const { m, set, rect, disc } = mapTools(); const C = C0; const r = rng(31337);

@@ -1230,6 +1230,7 @@ function render() {
     const t = S.map[y * MW + x]; if (!t) continue;
     ctx.drawImage(tileTex[isWall(t) ? (t === 7 ? (S.under[y * MW + x] || 2) : t === 6 ? 4 : t === 15 ? 2 : 1) : t], x * T, y * T, T, T);
     if (t === 11) { ctx.fillStyle = `rgba(255,220,80,${0.15 + 0.15 * Math.sin(S.t * 3 + x * 0.7 + y * 0.4)})`; ctx.fillRect(x * T, y * T, T, T); }
+    if (S.mapDef.deco && t === S.mapDef.deco.tile && !bedAt(x, y)) drawDeco(x, y, S.mapDef.deco);
     if (t === 10) { ctx.fillStyle = `rgba(255,255,255,${0.08 + 0.06 * Math.sin(S.t * 2 + x + y * 0.5)})`; ctx.fillRect(x * T, y * T + 10, T, 3); }
   }
   // Border-Linie
@@ -1305,6 +1306,27 @@ function render() {
     ctx.fillStyle = sg; ctx.fillRect(0, 0, cv.width, cv.height);
   }
   drawArrows(sc);
+}
+// Blumen, hohes Gras, Muscheln, Pilze: fest pro Kachel, je nach Map-Stimmung
+function tileHash(x, y, n) { let h = (x * 73856093) ^ (y * 19349663) ^ (n * 83492791); h = Math.imul(h ^ (h >>> 13), 1274126177); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; }
+function drawDeco(x, y, d) {
+  const px = x * T, py = y * T;
+  if (d.grass && tileHash(x, y, 7) < d.grass) { // Grasbüschel
+    const gx = px + 4 + tileHash(x, y, 8) * 22, gy = py + 8 + tileHash(x, y, 9) * 18, sw = Math.round(Math.sin(S.t * 1.8 + x * 0.9 + y * 0.6));
+    ctx.fillStyle = '#3f8f2c'; ctx.fillRect(gx, gy - 6, 2, 6); ctx.fillRect(gx + 3 + sw, gy - 8, 2, 8); ctx.fillRect(gx + 6, gy - 5, 2, 5);
+  }
+  for (let n = 0; n < 2; n++) {
+    if (tileHash(x, y, n) >= d.density) continue;
+    const fx = px + 5 + tileHash(x, y, n + 10) * 22, fy = py + 6 + tileHash(x, y, n + 20) * 20;
+    const col = d.cols[(tileHash(x, y, n + 30) * d.cols.length) | 0];
+    if (d.kind === 'shell') { ctx.fillStyle = col; ctx.fillRect(fx - 3, fy - 2, 6, 3); ctx.fillRect(fx - 2, fy - 4, 4, 2); ctx.fillStyle = 'rgba(0,0,0,.15)'; ctx.fillRect(fx - 3, fy + 1, 6, 1); continue; }
+    if (d.kind === 'shroom') { ctx.fillStyle = '#e8d8c0'; ctx.fillRect(fx - 1, fy - 3, 2, 4); ctx.fillStyle = col; ctx.fillRect(fx - 4, fy - 6, 8, 3); ctx.fillStyle = '#fff'; if (col === '#d32f2f') ctx.fillRect(fx - 2, fy - 6, 2, 1); continue; }
+    const sw = Math.round(Math.sin(S.t * 2 + x * 1.3 + y * 0.7 + n) * 0.8);
+    ctx.fillStyle = '#2e7d32'; ctx.fillRect(fx, fy - 4, 2, 6);                  // Stiel
+    ctx.fillStyle = col;                                                           // Blüte
+    ctx.fillRect(fx - 2 + sw, fy - 8, 6, 2); ctx.fillRect(fx + sw, fy - 10, 2, 6);
+    ctx.fillStyle = col === '#ffd52e' ? '#e08a00' : '#ffd52e'; ctx.fillRect(fx + sw, fy - 8, 2, 2); // Mitte
+  }
 }
 function drawWall(x, y, t) {
   const h = 14, px = x * T, py = y * T;

@@ -48,6 +48,11 @@ function renderPreview() {
     for (let z = -thick; z < hgt; z += 0.45) quad(x, y, z, side);
     const team = bedCells[y * MAP_W + x];
     quad(x, y, hgt, team ? TEAMS[team].col : top);
+    const dc = G.def.deco;
+    if (dc && t === dc.tile && !team && tileHash(x, y, 0) < dc.density) {
+      const [fx, fy] = proj(x + 0.5, y + 0.5, 0.05);
+      ctx.fillStyle = dc.cols[(tileHash(x, y, 30) * dc.cols.length) | 0]; ctx.fillRect(fx - s * 0.18, fy - s * 0.18, s * 0.36, s * 0.36);
+    }
     if (t === 11) { ctx.globalAlpha = 0.25 + 0.2 * Math.sin(performance.now() / 300 + x + y); quad(x, y, 0.01, '#ffe080'); ctx.globalAlpha = 1; }
   }
   // Betten mit Fähnchen
