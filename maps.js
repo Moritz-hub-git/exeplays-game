@@ -37,7 +37,7 @@ const MAPS = {
         beds: { gruen: [C, C + 16, 60], rot: [C, C - 16, 70], blau: [C - 16, C, 70], gelb: [C + 16, C, 70], lila: [C + 12, C - 12, 70] },
         spawn: [C + 0.5, C + 14.5], shop: [C - 2.5, C + 14.5],
         gens: [[C + 2.5, C + 16.5, 'bronze', 1.1, 16], [C + 2.5, C + 16.5, 'iron', 6.5, 12], [C + 2.5, C + 16.5, 'gold', 22, 6], [C + 0.5, C + 0.5, 'gold', 7, 8]],
-        ai: { strength: 1, spawnBase: 24, bowAfter: 150, startEco: { bronze: 6, iron: 0, gold: 0, sand: 40 } },
+        ai: { strength: 1, roster: 2, maxRoster: 3, bowAfter: 150 },
       };
     },
   },
@@ -62,7 +62,7 @@ const MAPS = {
         beds: { gruen: [C, C + 15, 80], rot: [C, C - 16, 90] },
         spawn: [C + 0.5, C + 13.5], shop: [C - 2.5, C + 14.5],
         gens: [[C + 2.5, C + 15.5, 'bronze', 0.9, 16], [C + 2.5, C + 15.5, 'iron', 5, 12], [C - 6.5, C + 0.5, 'iron', 4, 6], [C + 7.5, C + 0.5, 'iron', 4, 6], [C + 0.5, C + 0.5, 'gold', 5, 8]],
-        ai: { strength: 1.3, spawnBase: 14, bowAfter: 0, maxAlive: 4, startEco: { bronze: 8, iron: 6, gold: 3, sand: 32 } },
+        ai: { strength: 1.15, roster: 2, maxRoster: 4, bowAfter: 0 },
       };
     },
   },
@@ -103,7 +103,7 @@ const MAPS = {
         beds: { gruen: [C, C + 16, 60], rot: [C, C - 17, 70], blau: [C - 17, C - 1, 70], gelb: [C + 16, C - 1, 70] },
         spawn: [C + 0.5, C + 13.5], shop: [C - 3.5, C + 13.5],
         gens: [[C + 3.5, C + 17.5, 'bronze', 1.0, 16], [C + 3.5, C + 17.5, 'iron', 6, 12], [C + 3.5, C + 17.5, 'gold', 20, 6], [C + 0.5, C + 0.5, 'gold', 6, 8]],
-        ai: { strength: 1.1, spawnBase: 20, bowAfter: 180, startEco: { bronze: 6, iron: 2, gold: 0, sand: 24 } },
+        ai: { strength: 1.1, roster: 2, maxRoster: 4, bowAfter: 180 },
       };
     },
   },
@@ -133,7 +133,7 @@ const MAPS = {
         spawn: [C + 0.5, C + 10.5], shop: [C - 2.5, C + 10.5],
         gens: [[C + 2.5, C + 12.5, 'bronze', 1.0, 16], [C + 2.5, C + 12.5, 'iron', 5.5, 12], [C + 0.5, C + 0.5, 'gold', 5, 10], [C + 0.5, C + 0.5, 'iron', 3, 10]],
         border: { r0: 21, r1: 3.5, start: 40, dur: 420 },
-        ai: { strength: 1, spawnBase: 26, bowAfter: 120, startEco: { bronze: 6, iron: 0, gold: 0, sand: 24 } },
+        ai: { strength: 1, roster: 2, maxRoster: 3, bowAfter: 120 },
       };
     },
   },

@@ -205,18 +205,15 @@ function startGame(charKey, mapId = selectedMap) {
     inv: { bronze: 4, iron: 0, gold: 0, sand: 24 },
     sword: 0, armor: 0, bow: 0, apples: 0, appleT: 0, shader: false,
     kills: 0, deaths: 0, bedsBroken: 0, fallsP: 0, goldSnacked: 0, cheese: 0, lost: 0,
-    eco: {}, enemyTimer: {}, guardTimer: {}, alertT: {}, shopTimer: 2,
+    dealers: {}, roster: {}, respawnQ: [], bedAlert: {},
     gagT: 18, over: false, overT: 0, shake: 0,
     firstBedHit: false, wave: 1,
   };
-  M.enemyTeams.forEach((k, i) => {
-    S.eco[k] = { ...M.ai.startEco, sword: 0, armor: 0, bow: 0 };
-    S.enemyTimer[k] = 12 + i * 6; S.guardTimer[k] = 0;
-  });
   S.player = mkChar(charKey, pc, S.spawn.x, S.spawn.y, true);
   cam.x = S.spawn.x * T; cam.y = S.spawn.y * T;
   S.partner = mkChar(other(charKey), oc, S.spawn.x + 1, S.spawn.y + 0.5, false);
   S.ents.push(S.player, S.partner);
+  setupTeams();
   // Endstein unter die Betten
   for (const k in S.beds) { const b = S.beds[k]; setTile(b.x, b.y, 5); setTile(b.x, b.y + 1, 5); }
   $('hud').classList.remove('hidden');
@@ -235,26 +232,14 @@ function mkChar(key, def, x, y, isPlayer) {
   const skin = SKINS[def.skin];
   return { kind: 'hero', key, def, name: def.name, team: 'gruen', x, y, vx: 0, vy: 0, hp: 20, max: 20, dir: 1, fx: 0, fy: -1,
     sprites: spritesFor(def.skin, skin), isPlayer, atkCd: 0, hurtT: 0, walk: 0, dead: false, respawnT: 0,
-    fallT: 0, kbx: 0, kby: 0, bubble: null, bubbleT: 0, bridgeCd: 0, buildT: 0 };
+    fallT: 0, kbx: 0, kby: 0, bubble: null, bubbleT: 0, bridgeCd: 0, buildT: 0, breakT: 0,
+    inv: freshInv(), sword: 0, armor: 0, bow: 0, speed: 3.1, thinkT: 0, strafeT: 0, strafeDir: 1, shotCd: 0, state: 'guard', goal: null, target: null, lastHurt: -99 };
 }
 const NAMES = ['xXProGamerXx', 'Linus_Ben', 'DragoNick10', 'Jusaka', 'divam131', 'minkmunu1919', 'boy9gamehd', 'Michelb2004', 'ROBOMANIC', 'DerAMinecraftLP', 'Braeli_Berust', 'meynkraft', 'Kartoffelkopf_46', 'Linke_Socke', 'OrganspenderHD'];
 function bedFront(team, d = 1.8) {
   const b = S.beds[team], bx = b.x + 0.5, by = b.y + 1, a = Math.atan2(S.C + 0.5 - by, S.C + 0.5 - bx);
   return { x: bx + Math.cos(a) * d, y: by + Math.sin(a) * d };
 }
-function mkEnemy(team) {
-  const eco = S.eco[team], st = S.ai.strength;
-  const hp = Math.round((8 + S.wave * 2) * st);
-  const skinKey = 'en_' + team + '_' + ((Math.random() * 4) | 0);
-  const f = bedFront(team);
-  // Ausrüstung kommt aus der Team-Kasse (Computer-Shop)
-  const sand = Math.min(eco.sand, 24); eco.sand -= sand;
-  return { kind: 'enemy', team, name: NAMES[(Math.random() * NAMES.length) | 0], x: f.x + (Math.random() - 0.5) * 0.4, y: f.y + (Math.random() - 0.5) * 0.4,
-    vx: 0, vy: 0, hp, max: hp, dir: 1, sprites: spritesFor(skinKey, enemySkin(team)), atkCd: 1, hurtT: 0, walk: 0, dead: false,
-    fallT: 0, kbx: 0, kby: 0, buildT: 0, breakT: 0, speed: 1.7 + Math.random() * 0.5 + S.wave * 0.05, bubble: null, bubbleT: 0,
-    sword: eco.sword, armor: eco.armor, bow: eco.bow, sand, mode: 'attack', shotCd: 1 + Math.random() };
-}
-
 // ---------- Map helpers ----------
 const tileAt = (x, y) => { x = Math.floor(x); y = Math.floor(y); if (x < 0 || y < 0 || x >= MW || y >= MH) return S.void ? 0 : 9; return S.map[y * MW + x]; };
 function setTile(x, y, v) {
@@ -372,7 +357,7 @@ function updateHud(force) {
   const p = S.player;
   const hearts = Math.ceil(Math.max(0, p.hp) / 2);
   const h = '❤️'.repeat(hearts) + '🖤'.repeat(10 - hearts) + (S.armor ? ' 🛡️' : '') + (S.bow ? ' 🏹' : '') + (S.sword ? ' ⚔️' + S.sword : '');
-  const ecoKey = S.enemyTeams.map(k => S.eco[k].sword + '' + S.eco[k].bow + S.eco[k].armor).join();
+  const ecoKey = S.allTeams.map(k => { const g = teamGear(k); return g.sword + '' + g.bow + g.armor + g.n; }).join() + JSON.stringify(S.partner.inv) + S.partner.sword + S.partner.armor + S.partner.dead;
   const key = h + S.apples + JSON.stringify(S.inv) + Object.values(S.beds).map(b => b.alive + '' + (b.hp | 0)).join() + S.ents.length + ecoKey + (S.border ? S.border.r | 0 : '');
   if (!force && key === lastHud) return;
   lastHud = key;
@@ -384,9 +369,12 @@ function updateHud(force) {
     const b = S.beds[k];
     const alive = S.ents.filter(e => e.team === k && !e.dead).length;
     const mark = b.alive ? '✔' : (alive ? alive : '✘');
-    const gear = k === 'gruen' ? '' : `<span class="gear">${S.eco[k].sword ? '⚔' + S.eco[k].sword : ''}${S.eco[k].armor ? '🛡' : ''}${S.eco[k].bow ? '🏹' : ''}</span>`;
+    const tg = teamGear(k);
+    const gear = k === 'gruen' ? '' : `<span class="gear">${tg.sword ? '⚔' + tg.sword : ''}${tg.armor ? '🛡' : ''}${tg.bow ? '🏹' : ''}</span>`;
     html += `<div><span style="color:${TEAMS[k].col}">■</span> ${TEAMS[k].name}${k === 'gruen' ? ' (Du)' : ''} ${gear}<b style="float:right;margin-left:6px;color:${b.alive ? '#5f5' : '#f55'}">${mark}</b></div>`;
   }
+  const pt = S.partner;
+  html += `<div class="pg">${pt.name}: ${pt.dead ? '💀 ' : ''}⚔${pt.sword}${pt.armor ? '🛡' : ''} ${S.void ? '🧱' + pt.inv.sand : ''} 🟫${pt.inv.bronze}</div>`;
   if (S.border) html += `<div class="t" style="margin-top:3px">Border: ${Math.max(0, S.border.r).toFixed(0)}</div>`;
   $('board').innerHTML = html;
 }
@@ -447,34 +435,297 @@ function tnt() {
   closeShop(); caption('BOOOM', 8);
 }
 
-// ---------- Computer-Shop: Teams verdienen und kaufen selbst ----------
-function aiEconomy(dt) {
-  const mult = 1 + S.wave * 0.12;
-  for (const k of S.enemyTeams) {
-    if (!S.beds[k].alive) continue;
-    const eco = S.eco[k];
-    eco.bronze += dt * 0.7 * mult; eco.iron += dt * 0.085 * mult; eco.gold += dt * 0.02 * mult;
+// ---------- Einheiten: eigenes Inventar, eigener Shop, Taktik ----------
+// Gegner und Partner sammeln Ressourcen selbst ein, kaufen davon Ausrüstung und verlieren beim Tod alles.
+const ROLE_ICON = { farmer: '🌾', rusher: '⚡', hunter: '🎯', gold: '💰', guard: '🛡' };
+function freshGear(u) { u.inv = freshInv(); u.sword = 0; u.armor = 0; u.bow = 0; }
+function nearestWalkable(x, y, maxR = 3) {
+  for (let r = 0; r <= maxR; r += 0.5) for (let a = 0; a < 16; a++) {
+    const px = x + Math.cos(a / 16 * Math.PI * 2) * r, py = y + Math.sin(a / 16 * Math.PI * 2) * r;
+    if (walkable(tileAt(px, py)) && !bedAt(px, py)) return { x: Math.floor(px) + 0.5, y: Math.floor(py) + 0.5 };
   }
-  S.shopTimer -= dt;
-  if (S.shopTimer > 0) return;
-  S.shopTimer = 2;
+  return { x, y };
+}
+function setupTeams() {
+  S.dealers = { gruen: S.shopNpc }; S.roster = {}; S.respawnQ = []; S.bedAlert = {};
+  const gb = S.beds.gruen;
+  for (const g of S.gens) g.team = Math.hypot(g.x - (gb.x + 0.5), g.y - (gb.y + 1)) < 5 ? 'gruen' : null;
   for (const k of S.enemyTeams) {
-    if (!S.beds[k].alive) continue;
-    const eco = S.eco[k], tn = `<b style="color:${TEAMS[k].col}">Team ${TEAMS[k].name}</b>`;
-    if (eco.sand < 40 && eco.bronze >= 4) { pay({ bronze: 4 }, eco); eco.sand += 16; }
-    const sp = SWORD_PRICES[eco.sword];
-    if (sp && canPay(sp, eco)) { pay(sp, eco); eco.sword++; feed(`<span class="tag">[Shop]</span> ${tn} kauft ein ${SWORDS[eco.sword].name}.`); }
-    else if (!eco.armor && eco.iron >= 10) { pay({ iron: 10 }, eco); eco.armor = 1; feed(`<span class="tag">[Shop]</span> ${tn} kauft Kettenrüstung.`); }
-    else if (!eco.bow && S.t >= S.ai.bowAfter && eco.gold >= 3) { pay({ gold: 3 }, eco); eco.bow = 1; feed(`<span class="tag">[Shop]</span> ${tn} kauft Bögen. Bogen bringt mehr!`); }
+    const b = S.beds[k], bx = b.x + 0.5, by = b.y + 1, a = Math.atan2(S.C + 0.5 - by, S.C + 0.5 - bx), perp = a + Math.PI / 2;
+    const g = nearestWalkable(bx + Math.cos(perp) * 2.2, by + Math.sin(perp) * 2.2);
+    const d = nearestWalkable(bx - Math.cos(perp) * 2.2, by - Math.sin(perp) * 2.2);
+    S.gens.push({ x: g.x, y: g.y, kind: 'bronze', every: 1.1, cap: 16, t: 0, team: k },
+      { x: g.x, y: g.y, kind: 'iron', every: 6.5, cap: 8, t: 0, team: k },
+      { x: g.x, y: g.y, kind: 'gold', every: 24, cap: 4, t: 0, team: k });
+    S.dealers[k] = { x: d.x, y: d.y, team: k };
+    S.roster[k] = S.ai.roster;
+    for (let i = 0; i < S.roster[k]; i++) S.respawnQ.push({ team: k, t: 2 + i * 2.5 + Math.random() * 2 });
   }
+}
+function teamGear(k) {
+  const us = k === 'gruen' ? [S.partner] : S.ents.filter(e => e.kind === 'enemy' && e.team === k && !e.dead);
+  return { sword: Math.max(0, ...us.map(u => u.sword)), armor: us.some(u => u.armor), bow: us.some(u => u.bow), n: us.length };
+}
+function pickRole(team) {
+  const mates = S.ents.filter(e => e.kind === 'enemy' && e.team === team && !e.dead);
+  if (S.beds[team].alive && !mates.some(m => m.role === 'guard')) return 'guard';
+  const hasGold = S.gens.some(g => g.kind === 'gold' && !g.team);
+  const r = Math.random();
+  if (r < 0.4) return 'rusher';
+  if (r < 0.6) return 'hunter';
+  if (r < 0.8 && hasGold) return 'gold';
+  return 'farmer';
+}
+function mkEnemy(team) {
+  const st = S.ai.strength, hp = Math.round(14 * st + S.wave);
+  const skinKey = 'en_' + team + '_' + ((Math.random() * 4) | 0);
+  const f = bedFront(team);
+  const u = { kind: 'enemy', team, name: NAMES[(Math.random() * NAMES.length) | 0], x: f.x + (Math.random() - 0.5) * 0.4, y: f.y + (Math.random() - 0.5) * 0.4,
+    vx: 0, vy: 0, hp, max: hp, dir: 1, sprites: spritesFor(skinKey, enemySkin(team)), atkCd: 1, hurtT: 0, walk: 0, dead: false,
+    fallT: 0, kbx: 0, kby: 0, buildT: 0, breakT: 0, speed: 1.9 + Math.random() * 0.4, bubble: null, bubbleT: 0,
+    shotCd: 1, thinkT: 0, strafeT: 0, strafeDir: 1, state: 'idle', goal: null, target: null, pushing: false, lastHurt: -99 };
+  freshGear(u);
+  u.inv.bronze = 4; // wie im echten Bedwars: fast nichts in der Tasche
+  u.role = pickRole(team);
+  return u;
+}
+// nächster sinnvoller Einkauf (Blöcke, Schwert, Rüstung, Bogen)
+function shopWish(u) {
+  if (S.void && u.inv.sand < 24 && u.inv.bronze >= 4) return { p: { bronze: 4 }, f: () => (u.inv.sand += 16), n: '16 Blöcke', quiet: true };
+  const sp = SWORD_PRICES[u.sword]; if (sp && canPay(sp, u.inv) && !((u.role === 'guard' || u === S.partner) && u.sword >= 2)) return { p: sp, f: () => u.sword++, n: () => SWORDS[u.sword].name };
+  if (!u.armor && u.inv.iron >= 10) return { p: { iron: 10 }, f: () => (u.armor = 1), n: 'Kettenrüstung' };
+  if (u.kind === 'enemy' && !u.bow && S.t >= S.ai.bowAfter && u.inv.gold >= 3) return { p: { gold: 3 }, f: () => (u.bow = 1), n: 'einen Bogen' };
+  return null;
+}
+function tryShop(u) {
+  const dl = S.dealers[u.team]; if (!dl || dist(u, dl) > 2.4) return false;
+  let bought = false;
+  for (let i = 0; i < 4; i++) {
+    const w = shopWish(u); if (!w) break;
+    pay(w.p, u.inv); w.f(); bought = true;
+    if (!w.quiet) {
+      const col = u.kind === 'hero' ? '#fff' : TEAMS[u.team].col;
+      feed(`<span class="tag">[Shop]</span> <b style="color:${col}">${u.name}</b> kauft ${val(w.n)}.`);
+      if (u.kind === 'hero' && Math.random() < 0.5) say(u, `Ich hab mir ${val(w.n)} gegönnt!`);
+    }
+  }
+  return bought;
+}
+function nearestItem(u, pred, maxD) {
+  let best = null, bd = maxD;
+  for (const it of S.items) if (pred(it)) { const d = dist(u, it); if (d < bd) { bd = d; best = it; } }
+  return best;
+}
+function teamGen(k) { return S.gens.find(g => g.team === k && g.kind === 'bronze'); }
+function heroesAlive() { return [S.player, S.partner].filter(h => !h.dead && h.fallT <= 0); }
+function hostilesOf(u) { return S.ents.filter(e => e.team !== u.team && !e.dead && e.fallT <= 0); }
+function pickTargetTeam(u) {
+  const opts = S.allTeams.filter(k => k !== u.team && S.beds[k].alive);
+  if (!opts.length) return null;
+  const w = opts.map(k => (k === 'gruen' ? 2 : 1) / (1 + dist(u, S.beds[k]) / 25));
+  let r = Math.random() * w.reduce((a, b) => a + b, 0);
+  for (let i = 0; i < opts.length; i++) { r -= w[i]; if (r <= 0) return opts[i]; }
+  return opts[0];
+}
+function flankPoint(u) {
+  const b = S.beds[u.targetTeam || 'gruen'], tx = b.x + 0.5, ty = b.y + 1;
+  const mx = (u.x + tx) / 2, my = (u.y + ty) / 2, a = Math.atan2(ty - u.y, tx - u.x) + (Math.random() < 0.5 ? 1 : -1) * Math.PI / 2;
+  const off = 5 + Math.random() * 3;
+  return { x: Math.max(2, Math.min(MW - 3, mx + Math.cos(a) * off)), y: Math.max(2, Math.min(MH - 3, my + Math.sin(a) * off)) };
+}
+
+// Gegner denkt nach: Rückzug, Verteidigen, Kämpfen, Einkaufen, Farmen oder Rolle ausführen
+function enemyThink(u) {
+  const k = u.team, bed = S.beds[k], home = bedFront(k, 1.6);
+  let tgt = null, td = Infinity;
+  for (const h of hostilesOf(u)) { const d = dist(h, u); if (d < td) { td = d; tgt = h; } }
+  u.target = null;
+  // 1. Rückzug zum Heilen
+  if (u.hp < u.max * 0.35 && bed.alive && !(tgt && td < 1.4)) {
+    if (u.state !== 'retreat') say(u, ['Rückzug!', 'Ich muss heilen!', 'Ich bin gleich down!'][(Math.random() * 3) | 0]);
+    u.state = 'retreat'; u.pushing = false; u.goal = home; return;
+  }
+  if (u.state === 'retreat' && u.hp < u.max * 0.85 && bed.alive) { u.goal = home; return; }
+  // 2. Eigenes Bett wird angegriffen
+  if (bed.alive && (S.bedAlert[k] ?? -99) > S.t - 6 && dist(u, home) < 18 && !u.pushing) {
+    if (tgt && dist(tgt, home) < 7) { u.state = 'fight'; u.target = tgt; return; }
+    u.state = 'defend'; u.goal = home; return;
+  }
+  // 3. Held in der Nähe: kämpfen
+  const aggro = u.role === 'guard' ? (tgt && dist(tgt, home) < 7 ? 8 : 0) : u.bow ? 7.5 : u.role === 'hunter' ? 9 : 5;
+  if (tgt && td < aggro && walkable(tileAt(tgt.x, tgt.y))) { u.state = 'fight'; u.target = tgt; return; }
+  // 4. Einkaufen, wenn sich was lohnt
+  const wish = shopWish(u), wealth = u.inv.bronze + u.inv.iron * 3 + u.inv.gold * 6;
+  if (u.state === 'shop') u.shopTries = (u.shopTries || 0) + 1; else u.shopTries = 0;
+  if (wish && u.shopTries < 40 && (dist(u, home) < 6 || u.role === 'farmer' || wealth >= 14) && !u.pushing) { u.state = 'shop'; u.goal = S.dealers[k]; return; }
+  // 5. Rolle
+  let role = u.role;
+  if (S.void && role !== 'guard' && role !== 'farmer' && u.inv.sand < 8 && !u.pushing) role = 'farmer';
+  if (role === 'farmer') {
+    if (u.role === 'farmer' && (!S.void || u.inv.sand >= 16) && u.sword >= Math.min(2, Math.floor(S.t / 100))) u.role = pickRole(k);
+    const it = nearestItem(u, i => i.gen && i.gen.team === k, 14);
+    const g = teamGen(k);
+    u.state = 'farm'; u.goal = it || (g ? { x: g.x, y: g.y + 0.3 } : home); return;
+  }
+  if (role === 'guard') {
+    const it = nearestItem(u, i => i.gen && i.gen.team === k, 4);
+    u.state = 'guard'; u.goal = it || { x: home.x + Math.sin(S.t * 0.7 + u.x) * 1.2, y: home.y + Math.cos(S.t * 0.5) * 0.8 }; return;
+  }
+  if (role === 'gold') {
+    if (u.inv.gold >= 4 && wish) { u.state = 'shop'; u.goal = S.dealers[k]; return; }
+    const it = nearestItem(u, i => !i.gen.team && i.kind !== 'bronze', 30);
+    const g = S.gens.find(x => x.kind === 'gold' && !x.team);
+    if (!g) { u.role = 'rusher'; return; }
+    u.state = 'gold'; u.goal = it || g; return;
+  }
+  if (role === 'hunter') { u.state = 'hunt'; u.goal = tgt || S.player; return; }
+  // Rusher: Ziel-Team wählen (alle Teams, Grün etwas bevorzugt), sammeln, gemeinsam los, manchmal über die Flanke
+  if (u.targetTeam && !S.beds[u.targetTeam].alive) { u.targetTeam = null; u.pushing = false; }
+  if (!u.targetTeam) u.targetTeam = pickTargetTeam(u);
+  if (!u.targetTeam) { u.state = 'hunt'; u.goal = tgt || S.player; return; }
+  if (!u.pushing) {
+    const mates = S.ents.filter(m => m !== u && m.team === k && !m.dead && m.role === 'rusher' && m.state === 'rally');
+    if (!u.rallyUntil) { u.rallyUntil = S.t + 5 + Math.random() * 4; say(u, 'Sammeln! Wir greifen zusammen an.'); }
+    if (S.t < u.rallyUntil && mates.length < 1) { u.state = 'rally'; u.goal = bedFront(k, 3.2); return; }
+    u.pushing = true; u.rallyUntil = 0;
+    say(u, ['Los, Angriff!', `Auf das Bett von ${TEAMS[u.targetTeam].name}!`, 'Jetzt! Zange!'][(Math.random() * 3) | 0]);
+    if (Math.random() < 0.5 && (!S.void || u.inv.sand >= 16)) u.wp = flankPoint(u);
+    for (const m of mates) { m.pushing = true; m.rallyUntil = 0; m.wp = null; m.targetTeam = u.targetTeam; }
+  }
+  if (u.wp && dist(u, u.wp) < 1.5) u.wp = null;
+  u.state = 'push'; u.goal = u.wp || null;
+}
+
+function enemyAI(e, dt) {
+  if (e.dead || e.fallT > 0) return;
+  e.shotCd -= dt; e.thinkT -= dt;
+  if (e.thinkT <= 0) { e.thinkT = 0.35 + Math.random() * 0.3; enemyThink(e); }
+  if (e.state === 'shop' && tryShop(e)) e.thinkT = 0;
+  if (e.state === 'fight' && e.target && !e.target.dead) return combat(e, e.target, dt);
+  if (e.state === 'push' && !e.goal && e.targetTeam) {
+    const tk = e.targetTeam, bed = S.beds[tk];
+    if (!bed.alive) { e.thinkT = 0; e.vx = e.vy = 0; return; }
+    if (Math.hypot(e.x - (bed.x + 0.5), e.y - (bed.y + 1)) < 1.6) {
+      e.vx = e.vy = 0; if (e.atkCd <= 0) { e.atkCd = 0.9; e.swing = 0.18; hitBed(tk, 2 + e.sword, e); } return;
+    }
+    return followField(e, fieldTo(bedSources(tk), 'bed_' + tk, 3), dt);
+  }
+  moveToGoal(e, dt);
+}
+function moveToGoal(u, dt) {
+  const g = u.goal; if (!g) { u.vx = u.vy = 0; return; }
+  const L = dist(u, g);
+  if (L < 0.35) { u.vx = u.vy = 0; return; }
+  const sp = u.speed * (u.boost ? 1.35 : 1);
+  if (L < 2.5 && safeMove(u, g.x - u.x, g.y - u.y, sp)) return;
+  const gx = Math.floor(g.x), gy = Math.floor(g.y);
+  followField(u, fieldTo([[gx, gy]], 'c' + gx + ',' + gy, 3), dt);
+}
+// läuft nur, wenn vorne weder Void noch Wand ist
+function safeMove(e, dx, dy, sp) {
+  const L = Math.hypot(dx, dy) || 1, ax = e.x + dx / L * 0.55, ay = e.y + dy / L * 0.55;
+  if (!walkable(tileAt(ax, ay)) || bedAt(ax, ay)) { e.vx = e.vy = 0; return false; }
+  e.vx = dx / L * sp; e.vy = dy / L * sp; return true;
+}
+function strafe(e, ang) {
+  const sp = e.speed * 0.85;
+  for (let i = 0; i < 2; i++) {
+    const a = ang + e.strafeDir * Math.PI / 2;
+    if (safeMove(e, Math.cos(a), Math.sin(a), sp)) return;
+    e.strafeDir *= -1;
+  }
+}
+function chase(e, t, dt) {
+  if (safeMove(e, t.x - e.x, t.y - e.y, e.speed * (e.boost ? 1.35 : 1))) return;
+  const tx = Math.floor(t.x), ty = Math.floor(t.y);
+  followField(e, fieldTo([[tx, ty]], 'c' + tx + ',' + ty, 3), dt);
+}
+// Kampf-Manöver: zuschlagen und seitlich ausweichen (Hit & Run), Bogenschützen halten Abstand
+function combat(e, t, dt) {
+  const d = dist(e, t), ang = Math.atan2(t.y - e.y, t.x - e.x);
+  if (e.bow && d > 1.6) {
+    if (e.shotCd <= 0 && d < 7.5) { shootArrow(e, t, 11, 1.5 + e.sword * 0.3, 0.22); e.shotCd = 1.8 + Math.random() * 0.8; beep(600, 0.05, 'triangle', 0.03, -250); }
+    if (d < 3.3) { if (!safeMove(e, -Math.cos(ang), -Math.sin(ang), e.speed * 0.9)) strafe(e, ang); return; }
+    if (d > 6) return chase(e, t, dt);
+    return strafe(e, ang);
+  }
+  if (d <= 1.25) {
+    if (e.atkCd <= 0) { attack(e); e.strafeT = 0.3 + Math.random() * 0.35; e.strafeDir = Math.random() < 0.5 ? -1 : 1; }
+    if (e.strafeT > 0) { e.strafeT -= dt; return strafe(e, ang); }
+    e.vx = e.vy = 0; return;
+  }
+  if (e.strafeT > 0) { e.strafeT -= dt; return strafe(e, ang); }
+  chase(e, t, dt);
+}
+function followField(e, d, dt) {
+  const n = nextCell(e, d);
+  if (!n) { e.vx = e.vy = 0; return; }
+  const t = tileAt(n.x, n.y);
+  if (t === 0) {
+    if (e.inv.sand <= 0) { e.vx = e.vy = 0; e.pushing = false; return; }
+    // zum Rand laufen, dann Brücke bauen
+    const cx = Math.floor(e.x) + 0.5, cy = Math.floor(e.y) + 0.5;
+    if (Math.hypot(e.x - cx, e.y - cy) > 0.25) { moveToward(e, cx, cy, e.speed); return; }
+    e.vx = e.vy = 0; e.buildT += dt;
+    if (e.buildT > 0.4) { e.buildT = 0; setTile(n.x, n.y, 2); e.inv.sand--; if (Math.random() < 0.3) sfx.place(); }
+    return;
+  }
+  if (isWall(t)) {
+    e.vx = e.vy = 0; e.breakT += dt;
+    if (e.breakT > 0.5) { e.breakT = 0; e.swing = 0.18; chipWall(n.x, n.y, 0.3 + e.sword * 0.08); if (Math.random() < 0.04) say(e, 'Mach die Mauer weg!!'); }
+    return;
+  }
+  e.breakT = 0;
+  moveToward(e, n.x + 0.5, n.y + 0.5, e.speed * (e.boost ? 1.35 : 1));
+}
+function moveToward(a, gx, gy, sp) {
+  const dx = gx - a.x, dy = gy - a.y, L = Math.hypot(dx, dy) || 1;
+  a.vx = dx / L * sp; a.vy = dy / L * sp;
+}
+
+// Partner: verteidigt, kauft sich selbst Ausrüstung, begleitet Angriffe, zieht sich zum Heilen zurück
+function partnerThink(a) {
+  const bed = S.beds.gruen, p = S.player, home = bed.alive ? bedFront('gruen', 1.4) : null;
+  a.target = null;
+  const enemies = S.ents.filter(e => e.kind === 'enemy' && !e.dead && e.fallT <= 0 && walkable(tileAt(e.x, e.y)));
+  const nearest = (o, r) => { let b = null, bd = r; for (const e of enemies) { const d = dist(e, o); if (d < bd) { bd = d; b = e; } } return b; };
+  if (a.hp < a.max * 0.35 && bed.alive && !nearest(a, 1.3)) {
+    if (a.state !== 'retreat') say(a, ['Ich hab kaum noch Herzen, ich geh heilen!', 'Rückzug, ich bin gleich down!'][(Math.random() * 2) | 0]);
+    a.state = 'retreat'; a.goal = home; return;
+  }
+  if (a.state === 'retreat' && a.hp < a.max * 0.85 && bed.alive) return;
+  const intruder = bed.alive ? nearest({ x: bed.x + 0.5, y: bed.y + 1 }, 7) : null;
+  if (intruder) { a.state = 'fight'; a.target = intruder; return; }
+  const close = nearest(a, 4.5); if (close) { a.state = 'fight'; a.target = close; return; }
+  if (bed.alive && shopWish(a) && dist(a, S.shopNpc) < 10) { a.state = 'shop'; a.goal = S.shopNpc; return; }
+  const playerAway = !p.dead && (!bed.alive || dist(p, home) > 9);
+  if (playerAway && (a.sword >= 1 || a.boost) && (!S.void || a.inv.sand >= 6)) {
+    const threat = nearest(p, 5); if (threat) { a.state = 'fight'; a.target = threat; return; }
+    if (a.state !== 'escort') say(a, ['Ich komm mit!', 'Warte, ich geb dir Deckung!', 'Zusammen hustlen!'][(Math.random() * 3) | 0]);
+    a.state = 'escort'; a.goal = { x: p.x - p.fx * 1.3, y: p.y - p.fy * 1.3 }; return;
+  }
+  if (!bed.alive) { a.state = 'escort'; a.goal = { x: p.x - 1, y: p.y + 0.5 }; return; }
+  // farmen, wenn genug rumliegt und der Spieler nicht selbst gerade sammelt
+  const broke = a.sword === 0 || (S.void && a.inv.sand < 8);
+  const it = nearestItem(a, i => i.gen && i.gen.team === 'gruen' && dist(p, i) > (broke ? 1.2 : 3), 14);
+  const pile = S.items.filter(i => i.gen && i.gen.team === 'gruen').length;
+  if (it && (pile >= 4 || broke || !S.void)) { a.state = 'farm'; a.goal = it; return; }
+  a.state = 'guard'; a.goal = { x: home.x + Math.sin(S.t * 0.4) * 1.2, y: home.y };
+}
+function partnerAI(a, dt) {
+  if (a.dead || a.fallT > 0) return;
+  a.thinkT -= dt; if (a.thinkT <= 0) { a.thinkT = 0.3; partnerThink(a); }
+  if (a.state === 'shop' && tryShop(a)) a.thinkT = 0;
+  if (a.state === 'fight' && a.target && !a.target.dead) return combat(a, a.target, dt);
+  moveToGoal(a, dt);
 }
 
 // ---------- Kampf ----------
 function damage(e, amount, from) {
   if (e.dead || e.fallT > 0) return;
   if (e === S.player && S.armor) amount *= 0.5;
-  if (e.kind === 'enemy' && e.armor) amount *= 0.6;
-  e.hp -= amount; e.hurtT = 0.25;
+  else if (e !== S.player && e.armor) amount *= 0.6;
+  e.hp -= amount; e.hurtT = 0.25; e.lastHurt = S.t;
   floatText(e.x, e.y - 1.2, '-' + Math.max(1, Math.round(amount)), '#ff5555');
   if (e === S.player) { sfx.hurt(); S.shake = Math.max(S.shake, 0.15); if (Math.random() < 0.06) say(S.player, ['Ich kassiere gerade von irgendwo!', 'Woher bekomm ich den ganzen Schaden?', 'Ich sterbe, ich sterbe!'][(Math.random() * 3) | 0]); }
   else sfx.hit();
@@ -495,7 +746,7 @@ function kill(e, by, fell) {
   else feed(`<span class="tag">[BedWars]</span> ${nm(e)} wurde von ${by ? nm(by) : '???'} getötet.`);
   if (e.kind === 'enemy') {
     // Ausrüstung und Blöcke des Gegners sind einfach weg
-    e.sand = 0; e.sword = 0; e.armor = 0; e.bow = 0;
+    freshGear(e);
     if (by === S.player) { S.kills++; S.inv.bronze += 3; floatText(e.x, e.y - 1.6, '+3 Bronze', '#e8a060'); }
     if (by === S.partner && Math.random() < 0.3) say(S.partner, ['EZ', 'Gönn dir!', 'Uncut!', 'Ungehusstled!'][(Math.random() * 4) | 0]);
   } else {
@@ -507,7 +758,7 @@ function kill(e, by, fell) {
       if (fell) { S.fallsP++; caption(['FAIL!!!', 'Wieso nur?\nWieso?', 'Beim Weg\nverkackt.'][S.fallsP % 3], -8); setTimeout(() => say(S.partner, ['Was machst du?? 😂', 'Er wollte den Weg bauen und hat verkackt.', 'Das hat er nicht gelernt.'][(Math.random() * 3) | 0]), 700); }
       else caption('Du bist gestorben!\nRespawn in 4...', -4, 0.15, 0.35);
     } else if (e === S.partner) {
-      e.boost = 0;
+      e.boost = 0; freshGear(e);
       if (!S.beds.gruen.alive) { e.respawnT = 99999; feed(`<b>${e.name}</b> ist raus. Ab jetzt alleine...`); }
       else if (fell) setTimeout(() => say(S.player, 'Richtig! exe ist Schuld'), 400);
     }
@@ -515,7 +766,7 @@ function kill(e, by, fell) {
   updateHud(true);
 }
 function heroDmg(a) {
-  if (a === S.partner) return 1.5 + (a.boost ? 2 : 0);
+  if (a === S.partner) return SWORDS[a.sword].dmg * 0.75 + (a.boost ? 2 : 0);
   return SWORDS[S.sword].dmg + (a.def.dmgBonus || 0);
 }
 function attack(a) {
@@ -574,12 +825,9 @@ function hitBed(k, dmg, by) {
   for (let i = 0; i < 4; i++) S.parts.push({ x: b.x + 0.5, y: b.y + 1, vx: (Math.random() - 0.5) * 3, vy: -Math.random() * 3, t: 0.5, col: TEAMS[k].col, s: 3 });
   if (k === 'gruen' && !S.firstBedHit) { S.firstBedHit = true; caption('Euer Bett wird\nangegriffen!', -6); setTimeout(() => caption('Richtig!\nexe ist Schuld', -12), 1500); }
   if (k === 'gruen' && Math.random() < 0.08) say(S.partner, 'BETT!! BETT!!');
-  // Gegner-Team ruft Verstärkung, wenn sein Bett angegriffen wird
-  if (k !== 'gruen' && b.hp > 0 && (S.alertT[k] || 0) <= S.t) {
-    S.alertT[k] = S.t + 20;
-    const g = mkEnemy(k); g.guard = true; g.hp = g.max = Math.round((10 + S.wave * 3) * S.ai.strength); S.eco[k].sand += g.sand; g.sand = 0;
-    S.ents.push(g); say(g, ['Unser Bett!!', 'Weg da!', 'BETT VERTEIDIGEN!'][(Math.random() * 3) | 0]);
-  }
+  // Gegner-Team schlägt Alarm: alle in der Nähe eilen zur Verteidigung
+  if (k !== 'gruen') { if ((S.bedAlert[k] ?? -99) < S.t - 6) say(S.ents.find(e => e.team === k && !e.dead), 'Unser Bett!! Alle zurück!'); S.bedAlert[k] = S.t; }
+  if (k !== 'gruen' && by && by.team !== 'gruen' && Math.random() < 0.02) feed(`<span class="tag">[BedWars]</span> <b style="color:${TEAMS[by.team].col}">Team ${TEAMS[by.team].name}</b> greift das Bett von <b style="color:${TEAMS[k].col}">${TEAMS[k].name}</b> an!`);
   if (b.hp <= 0) destroyBed(k, by);
 }
 function destroyBed(k, by) {
@@ -591,10 +839,11 @@ function destroyBed(k, by) {
     setTimeout(() => say(S.partner, 'Das kann doch nicht wahr sein!'), 500);
     feed(`<span class="tag">[BedWars]</span> <b style="color:${TEAMS.gruen.col}">Euer Bett</b> wurde von ${byName} zerstört! Kein Respawn mehr!`);
   } else {
-    S.bedsBroken++;
-    for (const g of S.ents) if (g.guard && g.team === k) { g.guard = false; say(g, 'NEIN! Mein Bett!'); }
+    if (by && by.team === 'gruen') S.bedsBroken++;
+    for (const g of S.ents) if (g.kind === 'enemy' && g.team === k && !g.dead && g.role === 'guard') { g.role = 'hunter'; say(g, 'NEIN! Mein Bett!'); }
     feed(`<span class="tag">[BedWars]</span> Das Bett von Team <b style="color:${TEAMS[k].col}">${TEAMS[k].name}</b> wurde von <b>${byName}</b> zerstört!`);
-    if (by) {
+    if (by && by.team !== 'gruen') setTimeout(() => say(S.partner, `Team ${TEAMS[by.team].name} räumt auf! Gut für uns.`), 600);
+    if (by && by.team === 'gruen') {
       caption(['#exeplaysarmy', 'Gönn dir!', 'Bett weg, Spaß da', 'Ungehusstled!!'][S.bedsBroken % 4], -10);
       S.inv.gold += 2; S.inv.iron += 3;
       if (k === 'gelb') setTimeout(() => say(S.player, 'Gelb ist halt das Lappenteam.'), 1200);
@@ -660,24 +909,24 @@ function update(dt) {
     }
   }
   S.wave = 1 + Math.floor(S.t / 90) + S.bedsBroken;
-  aiEconomy(dt);
   if (S.border) updateBorder(dt);
-  // Bett-Verteidiger
-  for (const k of S.enemyTeams) {
-    if (!S.beds[k].alive || S.ents.some(e => e.guard && e.team === k && !e.dead)) continue;
-    S.guardTimer[k] -= dt;
-    if (S.guardTimer[k] <= 0) { const g = mkEnemy(k); g.guard = true; g.hp = g.max = Math.round((12 + S.wave * 3) * S.ai.strength); g.name = g.name + ' 🛡'; S.eco[k].sand += g.sand; g.sand = 0; S.ents.push(g); S.guardTimer[k] = 15; }
-  }
-  // Gegner-Spawns
-  const maxAlive = (S.ai.maxAlive || 99);
+  // Gegner-Teams: feste Kaderstärke, Respawn nach 5 s solange das Bett steht
   for (const k of S.enemyTeams) {
     if (!S.beds[k].alive) continue;
-    S.enemyTimer[k] -= dt;
-    if (S.enemyTimer[k] <= 0) {
-      const alive = S.ents.filter(e => e.kind === 'enemy' && !e.dead && !e.guard).length;
-      if (alive < Math.min(maxAlive, 3 + S.wave)) S.ents.push(mkEnemy(k));
-      S.enemyTimer[k] = Math.max(6, S.ai.spawnBase - S.t / 14) + Math.random() * 6;
-    }
+    S.roster[k] = Math.min(S.ai.maxRoster, S.ai.roster + Math.floor(S.t / 150));
+    const have = S.ents.filter(e => e.kind === 'enemy' && e.team === k && !e.dead).length + S.respawnQ.filter(q => q.team === k).length;
+    for (let i = have; i < S.roster[k]; i++) S.respawnQ.push({ team: k, t: S.t + 5 });
+  }
+  S.respawnQ = S.respawnQ.filter(q => {
+    if (S.t < q.t) return true;
+    if (S.beds[q.team].alive) S.ents.push(mkEnemy(q.team));
+    return false;
+  });
+  // Heilung an der eigenen Basis (wer 3 s keinen Schaden bekam)
+  for (const e of S.ents) {
+    if (e.dead || e.hp >= e.max || S.t - (e.lastHurt ?? -99) < 3) continue;
+    const b = S.beds[e.team];
+    if (b.alive && Math.hypot(e.x - (b.x + 0.5), e.y - (b.y + 1)) < 3.5) e.hp = Math.min(e.max, e.hp + 1.5 * dt);
   }
   // Spieler
   const p = S.player;
@@ -703,7 +952,11 @@ function update(dt) {
     const it = S.items[i];
     if (!walkable(tileAt(it.x, it.y))) { S.items.splice(i, 1); continue; }
     if (!p.dead && p.fallT <= 0 && Math.hypot(it.x - p.x, it.y - p.y) < 0.9) {
-      S.inv[it.kind]++; S.items.splice(i, 1); sfx.pick();
+      S.inv[it.kind]++; S.items.splice(i, 1); sfx.pick(); continue;
+    }
+    for (const u of S.ents) {
+      if (u === p || u.dead || u.fallT > 0 || Math.hypot(it.x - u.x, it.y - u.y) >= 0.8) continue;
+      u.inv[it.kind]++; S.items.splice(i, 1); break;
     }
   }
   // Pfeile (vom Spieler und von Gegner-Bogenschützen)
@@ -753,106 +1006,8 @@ function updateBorder(dt) {
   const inside = o => Math.hypot(o.x - C, o.y - C) < B.r - 1.2;
   if (!inside(S.shopNpc)) { S.shopNpc.x = C - 1.8; S.shopNpc.y = C + 1.2; feed('<span class="tag">[BedWars]</span> Der Dealer flüchtet in die Mitte.'); }
   if (!inside(S.spawn)) { S.spawn.x = C; S.spawn.y = C + 1; }
+  for (const k of S.enemyTeams) { const d = S.dealers[k]; if (d && !inside(d)) { const a = S.enemyTeams.indexOf(k) * 1.3; d.x = C + Math.cos(a) * 1.6; d.y = C + Math.sin(a) * 1.6; } }
   if (!B.warned && k > 0 && Math.hypot(S.player.x - C, S.player.y - C) > B.r - 3) { B.warned = true; caption('Der Border kommt!\nAb in die Mitte!', -6); setTimeout(() => (B.warned = false), 8000); }
-}
-
-function moveToward(a, gx, gy, sp) {
-  const dx = gx - a.x, dy = gy - a.y, L = Math.hypot(dx, dy) || 1;
-  a.vx = dx / L * sp; a.vy = dy / L * sp;
-}
-function partnerAI(a, dt) {
-  if (a.dead || a.fallT > 0) return;
-  const bed = S.beds.gruen;
-  const home = bed.alive ? bedFront('gruen', 1.4) : { x: S.player.x - 1, y: S.player.y + 0.5 };
-  if (bed.alive) home.x += Math.sin(S.t * 0.4) * 1.2;
-  let target = null, td = 9;
-  for (const e of S.ents) if (e.kind === 'enemy' && !e.dead && e.fallT <= 0) {
-    const d = Math.min(bed.alive ? dist(e, { x: bed.x + 0.5, y: bed.y + 1 }) : 99, dist(e, a) + 2);
-    if (d < td && walkable(tileAt(e.x, e.y))) { td = d; target = e; }
-  }
-  const goal = target || home;
-  const sp = 3.1 * (a.boost ? 1.35 : 1);
-  const L = dist(a, goal);
-  if (target && L < 1.4) { a.vx = a.vy = 0; attack(a); return; }
-  if (L < 0.5) { a.vx = a.vy = 0; return; }
-  // Wegfindung ohne Bridgen (Partner baut keine Brücken)
-  const d = fieldTo([[Math.floor(goal.x), Math.floor(goal.y)]], 'p' + Math.floor(goal.x) + ',' + Math.floor(goal.y), Infinity);
-  const n = L > 1.5 ? nextCell(a, d) : null;
-  if (n && !isWall(tileAt(n.x, n.y))) moveToward(a, n.x + 0.5, n.y + 0.5, sp);
-  else if (walkable(tileAt(a.x + (goal.x - a.x) / L * 0.4, a.y + (goal.y - a.y) / L * 0.4))) moveToward(a, goal.x, goal.y, sp);
-  else a.vx = a.vy = 0;
-}
-
-function enemyAI(e, dt) {
-  if (e.dead || e.fallT > 0) return;
-  const p = S.player, pt = S.partner;
-  e.shotCd -= dt;
-  // nahe Helden
-  let near = null, nd = e.guard ? 6 : 3.2;
-  for (const h of [p, pt]) if (!h.dead && h.fallT <= 0) { const d = dist(h, e); if (d < nd && (!e.guard || dist(h, bedFront(e.team, 0)) < 6.5)) { nd = d; near = h; } }
-  // Bogenschützen schießen aus der Distanz
-  if (e.bow && e.shotCd <= 0) {
-    let tgt = null, bd = 7;
-    for (const h of [p, pt]) if (!h.dead && h.fallT <= 0) { const d = dist(h, e); if (d > 1.8 && d < bd) { bd = d; tgt = h; } }
-    if (tgt) { shootArrow(e, tgt, 11, 1.5, 0.25); e.shotCd = 2.4 + Math.random(); beep(600, 0.05, 'triangle', 0.03, -250); }
-  }
-  if (near && nd < 1.25) { e.vx = e.vy = 0; attack(e); return; }
-  if (e.guard) {
-    const h = near || bedFront(e.team, 1.8 + Math.sin(S.t + e.x) * 0.6);
-    const L = dist(e, h);
-    if (L < 0.3) { e.vx = e.vy = 0; return; }
-    const ax = e.x + (h.x - e.x) / L * 0.4, ay = e.y + (h.y - e.y) / L * 0.4;
-    if (walkable(tileAt(ax, ay))) moveToward(e, h.x, h.y, e.speed); else e.vx = e.vy = 0;
-    return;
-  }
-  if (near) { // auf Helden zulaufen, wenn möglich
-    const ax = e.x + (near.x - e.x) / nd * 0.5, ay = e.y + (near.y - e.y) / nd * 0.5;
-    if (walkable(tileAt(ax, ay))) { moveToward(e, near.x, near.y, e.speed); return; }
-  }
-  const bed = S.beds.gruen;
-  // ohne Blöcke heim zum Nachkaufen (falls Brücke nötig)
-  if (e.mode === 'restock') {
-    const home = bedFront(e.team, 1.5);
-    if (dist(e, home) < 1.6) {
-      const eco = S.eco[e.team], take = Math.min(eco.sand, 24);
-      if (take > 0) { eco.sand -= take; e.sand += take; e.mode = 'attack'; say(e, 'Blöcke geholt!'); }
-      else { e.vx = e.vy = 0; return; }
-    } else {
-      const d = fieldTo(bedSources(e.team), 'home_' + e.team, 3);
-      return followField(e, d, dt, true);
-    }
-  }
-  if (bed.alive && Math.hypot(e.x - (bed.x + 0.5), e.y - (bed.y + 1)) < 1.6) {
-    e.vx = e.vy = 0; if (e.atkCd <= 0) { e.atkCd = 1.0; e.swing = 0.18; hitBed('gruen', 2 + Math.floor(S.wave / 3), e); } return;
-  }
-  let d;
-  if (bed.alive) d = fieldTo(bedSources('gruen'), 'bed_gruen', 3);
-  else { const h = p.dead ? pt : p, hx = Math.floor(h.x), hy = Math.floor(h.y); d = fieldTo([[hx, hy]], 'hero' + hx + ',' + hy, 3); }
-  followField(e, d, dt, false);
-}
-function followField(e, d, dt, homeward) {
-  const n = nextCell(e, d);
-  if (!n) { e.vx = e.vy = 0; return; }
-  const t = tileAt(n.x, n.y);
-  if (t === 0) {
-    if (e.sand <= 0) {
-      if (!homeward) { e.mode = 'restock'; say(e, 'Keine Blöcke mehr!'); }
-      e.vx = e.vy = 0; return;
-    }
-    // zum Rand laufen, dann Brücke bauen
-    const cx = Math.floor(e.x) + 0.5, cy = Math.floor(e.y) + 0.5;
-    if (Math.hypot(e.x - cx, e.y - cy) > 0.25) { moveToward(e, cx, cy, e.speed); return; }
-    e.vx = e.vy = 0; e.buildT += dt;
-    if (e.buildT > 0.45) { e.buildT = 0; setTile(n.x, n.y, 2); e.sand--; if (Math.random() < 0.3) sfx.place(); }
-    return;
-  }
-  if (isWall(t)) {
-    e.vx = e.vy = 0; e.breakT += dt; e.swing = e.swing || 0;
-    if (e.breakT > 0.5) { e.breakT = 0; e.swing = 0.18; chipWall(n.x, n.y, 0.3 + e.sword * 0.08); if (Math.random() < 0.04) say(e, 'Mach die Mauer weg!!'); }
-    return;
-  }
-  e.breakT = 0;
-  moveToward(e, n.x + 0.5, n.y + 0.5, e.speed);
 }
 
 function physics(e, dt) {
@@ -1006,16 +1161,17 @@ function render() {
     ctx.fillStyle = 'rgba(255,255,255,.6)'; ctx.fillRect(it.x * T - 5, it.y * T - 6 + bob, 4, 2);
   }
   // Wände und Figuren zeilenweise (damit Figuren hinter Wänden verschwinden)
-  const list = S.ents.filter(e => !e.dead).concat([{ villager: true, x: S.shopNpc.x, y: S.shopNpc.y }]).sort((a, b) => a.y - b.y);
+  const vill = Object.entries(S.dealers).map(([k, d]) => ({ villager: true, x: d.x, y: d.y, team: k }));
+  const list = S.ents.filter(e => !e.dead).concat(vill).sort((a, b) => a.y - b.y);
   let li = 0;
   for (let y = y0; y <= y1; y++) {
-    while (li < list.length && list[li].y < y + 0.5) { const e = list[li++]; e.villager ? drawVillager(e.x * T, e.y * T) : drawEnt(e); }
+    while (li < list.length && list[li].y < y + 0.5) { const e = list[li++]; e.villager ? drawVillager(e.x * T, e.y * T, e.team) : drawEnt(e); }
     for (let x = x0; x <= x1; x++) {
       const t = S.map[y * MW + x]; if (!isWall(t)) continue;
       drawWall(x, y, t);
     }
   }
-  while (li < list.length) { const e = list[li++]; e.villager ? drawVillager(e.x * T, e.y * T) : drawEnt(e); }
+  while (li < list.length) { const e = list[li++]; e.villager ? drawVillager(e.x * T, e.y * T, e.team) : drawEnt(e); }
   // Pfeile
   ctx.lineWidth = 2;
   for (const ar of S.arrows) { const L = Math.hypot(ar.vx, ar.vy); ctx.strokeStyle = ar.team === 'gruen' ? '#5a3a1a' : TEAMS[ar.team].dark; ctx.beginPath(); ctx.moveTo(ar.x * T, ar.y * T); ctx.lineTo((ar.x - ar.vx / L * 0.5) * T, (ar.y - ar.vy / L * 0.5) * T); ctx.stroke(); }
@@ -1067,23 +1223,23 @@ function drawEnt(e) {
   const ps = 2;
   ctx.drawImage(spr, -6 * ps, -21 * ps, 12 * ps, 21 * ps);
   // Rüstung
-  if ((e === S.player && S.armor) || (e.kind === 'enemy' && e.armor)) { ctx.fillStyle = 'rgba(180,180,190,.55)'; ctx.fillRect(-4 * ps, -13 * ps, 8 * ps, 6 * ps); }
+  if ((e === S.player && S.armor) || (e !== S.player && e.armor)) { ctx.fillStyle = 'rgba(180,180,190,.55)'; ctx.fillRect(-4 * ps, -13 * ps, 8 * ps, 6 * ps); }
   if (e.hurtT > 0) { ctx.globalAlpha = 0.5; ctx.fillStyle = '#f00'; ctx.fillRect(-6 * ps, -21 * ps, 12 * ps, 21 * ps); ctx.globalAlpha = 1; }
   // Schwert oder Bogen
   const sw = e.swing > 0 ? (e.swing / 0.18) : 0;
   ctx.save();
   ctx.translate(11, -20);
   ctx.rotate(-0.6 + sw * 1.8);
-  const lvl = e === S.player ? S.sword : e.kind === 'enemy' ? e.sword : 1;
+  const lvl = e === S.player ? S.sword : e.sword;
   ctx.fillStyle = '#5a3a1a'; ctx.fillRect(-2, -1, 4, 7);
   ctx.fillStyle = '#333'; ctx.fillRect(-5, -3, 10, 3);
   ctx.fillStyle = SWORDS[lvl].col; ctx.fillRect(-2, -17, 4, 14);
   ctx.restore();
-  if ((e === S.player && S.bow) || (e.kind === 'enemy' && e.bow)) { ctx.strokeStyle = '#7a4a1a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(-12, -20, 8, -1.2, 1.2); ctx.stroke(); }
+  if ((e === S.player && S.bow) || (e !== S.player && e.bow)) { ctx.strokeStyle = '#7a4a1a'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(-12, -20, 8, -1.2, 1.2); ctx.stroke(); }
   ctx.restore();
   if (e.fallT > 0) return;
   ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
-  const label = e.name + (e.kind === 'enemy' && S.void && e.sand > 0 && !e.guard ? ` 🧱${e.sand}` : '');
+  const label = e.name + (e.kind === 'enemy' ? ' ' + (ROLE_ICON[e.role] || '') + (S.void && e.inv.sand > 0 ? ` 🧱${e.inv.sand}` : '') : '');
   const w = ctx.measureText(label).width + 6;
   ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(x - w / 2, y - 56, w, 11);
   ctx.fillStyle = e.kind === 'hero' ? '#fff' : TEAMS[e.team].col; ctx.fillText(label, x, y - 47.5);
@@ -1092,7 +1248,7 @@ function drawEnt(e) {
     ctx.fillStyle = '#e33'; ctx.fillRect(x - 12, y - 61, 24 * Math.max(0, e.hp / e.max), 4);
   }
 }
-function drawVillager(x, y) {
+function drawVillager(x, y, team = 'gruen') {
   ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(x - 9, y - 2, 18, 5);
   ctx.fillStyle = '#6b4a2a'; ctx.fillRect(x - 9, y - 26, 18, 26);
   ctx.fillStyle = '#4a321b'; ctx.fillRect(x - 9, y - 16, 18, 4);
@@ -1102,7 +1258,7 @@ function drawVillager(x, y) {
   ctx.fillStyle = '#4a321b'; ctx.fillRect(x - 8, y - 40, 16, 2);
   ctx.font = 'bold 9px monospace'; ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(x - 22, y - 56, 44, 11);
-  ctx.fillStyle = '#ffd83a'; ctx.fillText('DEALER', x, y - 47.5);
+  ctx.fillStyle = team === 'gruen' ? '#ffd83a' : TEAMS[team].col; ctx.fillText('DEALER', x, y - 47.5);
 }
 function drawBubble(e) {
   const x = e.x * T, y = e.y * T - 66;
