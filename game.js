@@ -309,7 +309,9 @@ function nextCell(e, d) {
 }
 
 // ---------- Input ----------
-const input = { mx: 0, my: 0, hit: false, build: false, keys: {} };
+const input = { mx: 0, my: 0, hit: false, hitAll: false, mine: false, build: false, keys: {} };
+// Fenster verliert den Fokus: keine hängenden Tasten
+window.addEventListener('blur', () => { input.hit = input.mine = input.build = false; input.keys = {}; });
 let stickId = null, stickOrigin = null;
 const stick = $('stick'), knob = $('knob');
 function stickPos() { const r = stick.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, r: r.width / 2 }; }
@@ -343,14 +345,16 @@ function holdButton(el, flag) {
   const up = () => { input[flag] = false; el.classList.remove('on'); };
   el.addEventListener('pointerup', up); el.addEventListener('pointerleave', up); el.addEventListener('pointercancel', up);
 }
-holdButton($('bHit'), 'hit');
+holdButton($('bHit'), 'hitAll'); // Handy: ein Knopf für Schlagen, Bogen und Abbauen
 holdButton($('bBuild'), 'build');
 $('bShop').addEventListener('click', () => openShop());
 window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   input.keys[k] = true;
+  // Computer: Leertaste schlägt/schießt, F/Q baut, R baut ab
   if (e.key === ' ') { input.hit = true; e.preventDefault(); }
   if (k === 'q' || k === 'f') input.build = true;
+  if (k === 'r') input.mine = true;
   if (k === 'e' && S && !S.over) { $('shop').classList.contains('hidden') ? openShop() : closeShop(); }
   if (e.key === 'Escape' && !$('shop').classList.contains('hidden')) { closeShop(); e.preventDefault(); }
 });
@@ -358,6 +362,7 @@ window.addEventListener('keyup', e => {
   const k = e.key.toLowerCase(); input.keys[k] = false;
   if (e.key === ' ') input.hit = false;
   if (k === 'q' || k === 'f') input.build = false;
+  if (k === 'r') input.mine = false;
 });
 
 // ---------- UI: Sprechblasen, Captions, Feed ----------
@@ -612,6 +617,46 @@ function flankPoint(u) {
   return { x: Math.max(2, Math.min(MW - 3, mx + Math.cos(a) * off)), y: Math.max(2, Math.min(MH - 3, my + Math.sin(a) * off)) };
 }
 
+// sichtbare Kampfkraft (nur Schwert, Rüstung, Bogen, Leben: was man auch auf dem Bildschirm sieht)
+function powerOf(e) {
+  const pl = e === S.player, sw = pl ? S.sword : e.sword, ar = pl ? S.armor : e.armor, bw = pl ? S.bow : e.bow;
+  return 1 + sw + (ar ? 1 : 0) + (bw ? 0.5 : 0) + e.hp / e.max;
+}
+const onBridge = e => S.void && !!S.placed[Math.floor(e.y) * MW + Math.floor(e.x)];
+// bestes Ziel statt einfach das nächste: angeschlagene, auf Brücken stehende oder schon von Teamkollegen bearbeitete Gegner zuerst
+function pickFoe(u, list, range) {
+  let best = null, bs = Infinity;
+  for (const h of list) {
+    const d = dist(h, u); if (d > range) continue;
+    const focus = S.ents.some(m => m !== u && m.team === u.team && m.target === h && !m.dead);
+    const sc = d - (1 - h.hp / h.max) * 2.5 - (focus ? 1 : 0) - (onBridge(h) ? 1.5 : 0) + (walkable(tileAt(h.x, h.y)) ? 0 : 99);
+    if (sc < bs) { bs = sc; best = h; }
+  }
+  return best;
+}
+// Stärkeverhältnis in der Umgebung (eigene Leute gegen Feinde im Umkreis)
+function localOdds(u, r) {
+  let mine = 0, theirs = 0;
+  for (const e of S.ents) {
+    if (e.dead || e.fallT > 0 || dist(e, u) > r) continue;
+    if (e.team === u.team) mine += powerOf(e); else theirs += powerOf(e);
+  }
+  return theirs ? mine / theirs : 9;
+}
+// Richtung zum nächsten Abgrund (Void) neben einer Figur, oder null
+function voidAngle(t, maxR = 2.6) {
+  if (!S.void) return null;
+  for (let r = 1; r <= maxR; r += 0.6) {
+    let best = null, bd = 9;
+    for (let i = 0; i < 16; i++) {
+      const a = i / 16 * Math.PI * 2, x = t.x + Math.cos(a) * r, y = t.y + Math.sin(a) * r;
+      if (tileAt(x, y) === 0) { const d = r; if (d < bd) { bd = d; best = a; } }
+    }
+    if (best !== null) return best;
+  }
+  return null;
+}
+
 // Gegner entscheidet laufend, was in der aktuellen Lage am meisten Sinn ergibt (keine festen Rollen)
 function enemyThink(u) {
   const k = u.team, bed = S.beds[k], home = bedFront(k, 2.6);
@@ -620,6 +665,11 @@ function enemyThink(u) {
   for (const h of hostiles) { const d = dist(h, u); if (d < td) { td = d; tgt = h; } }
   u.target = null;
   const mates = S.ents.filter(m => m !== u && m.kind === 'enemy' && m.team === k && !m.dead);
+  // 0. Unterzahl weit weg von zu Hause: absetzen statt sinnlos sterben
+  if (tgt && td < 6 && dist(u, home) > 10 && u.hp < u.max * 0.6 && localOdds(u, 6) < 0.6) {
+    if (u.state !== 'retreat') say(u, ['Zu viele! Weg hier!', 'Rückzug, die sind zu stark!', 'Ich hol Verstärkung!'][(Math.random() * 3) | 0]);
+    u.state = 'retreat'; u.pushing = false; u.plan = null; u.goal = home; return;
+  }
   // 1. Wenig Leben: zurück zum Bett und heilen
   if (u.hp < u.max * 0.35 && bed.alive && !(tgt && td < 1.4)) {
     if (u.state !== 'retreat') say(u, ['Rückzug!', 'Ich muss heilen!', 'Ich bin gleich down!'][(Math.random() * 3) | 0]);
@@ -639,8 +689,10 @@ function enemyThink(u) {
       }
     }
   }
-  // 3. Gegner in der Nähe: kämpfen (Bogenschützen schon aus größerer Entfernung)
-  if (tgt && td < (u.bow ? 7.5 : 5) && walkable(tileAt(tgt.x, tgt.y))) { u.state = 'fight'; u.target = tgt; return; }
+  // 3. Gegner in der Nähe: kämpfen. Bogenschützen nehmen Brückenbauer schon von Weitem ins Visier
+  if (u.bow) { const br = pickFoe(u, hostiles.filter(onBridge), 9.5); if (br) { u.state = 'fight'; u.target = br; return; } }
+  const foe = pickFoe(u, hostiles, u.bow ? 7.5 : 5);
+  if (foe) { u.state = 'fight'; u.target = foe; return; }
   // 4. Einkaufen, wenn sich etwas leisten lässt und der Dealer nicht zu weit ist
   const wish = shopWish(u), wealth = u.inv.bronze + u.inv.iron * 3 + u.inv.gold * 6;
   if (u.state === 'shop') u.shopTries = (u.shopTries || 0) + 1; else u.shopTries = 0;
@@ -685,12 +737,13 @@ function choosePlan(u, mates, home) {
     if (bestT) opts.push({ act: 'attack', team: bestT, s: (geared ? 1.6 : 0.3) + bestS + mates.filter(m => m.plan && m.plan.act === 'attack').length * 0.4 + noise() });
   }
   // Jagen: Spieler ist in der Nähe der eigenen Basis oder schwächer ausgerüstet
-  const p = S.player;
-  if (!p.dead) {
-    const pPow = 1 + S.sword + (S.armor ? 1 : 0) + p.hp / p.max;
-    const nearBase = dist(p, home) < 12;
-    opts.push({ act: 'hunt', s: (nearBase ? 1.8 : 0) + (teamPower(u) > pPow ? 1.2 : -0.5) + (!S.beds.gruen.alive ? 2.5 : 0) - dist(u, p) / 25 + noise() });
+  let prey = null, ps = -9;
+  for (const h of hostilesOf(u)) {
+    if (h.kind !== 'hero') continue;
+    const sc = (dist(h, home) < 12 ? 1.8 : 0) + (teamPower(u) > powerOf(h) ? 1.2 : -0.5) + (!S.beds[h.team].alive ? 2.5 : 0) + (onBridge(h) ? 1 : 0) - dist(u, h) / 25;
+    if (sc > ps) { ps = sc; prey = h; }
   }
+  if (prey) opts.push({ act: 'hunt', prey, s: ps + noise() });
   // Bett einbauen, wenn Lücken im Ring sind und Blöcke übrig
   if (S.beds[k].alive) {
     const gaps = ringGaps(k).length, spare = u.inv.sand - needSand;
@@ -735,7 +788,7 @@ function runPlan(u, tgt, mates, home) {
     const g = S.gens.find(x => x.kind === 'gold' && !x.team);
     u.state = 'gold'; u.goal = it || g || home; return;
   }
-  if (act === 'hunt') { u.state = 'hunt'; u.goal = (!S.player.dead ? S.player : tgt) || home; return; }
+  if (act === 'hunt') { const pr = u.plan.prey; u.state = 'hunt'; u.goal = (pr && !pr.dead ? pr : tgt) || home; return; }
   // Angriff: kurz sammeln, gemeinsam los, manchmal über die Flanke
   if (!u.pushing) {
     const ready = mates.filter(m => m.state === 'rally' && m.plan && m.plan.team === u.plan.team);
@@ -800,14 +853,34 @@ function chase(e, t, dt) {
 // Kampf-Manöver: zuschlagen und seitlich ausweichen (Hit & Run), Bogenschützen halten Abstand
 function combat(e, t, dt) {
   const d = dist(e, t), ang = Math.atan2(t.y - e.y, t.x - e.x);
+  if (d > 3.5) e.edgeT = 0;
   if (e.bow && d > 1.6) {
     if (e.shotCd <= 0 && d < 7.5) { shootArrow(e, t, 11, 1.5 + e.sword * 0.3, 0.22); e.shotCd = 1.8 + Math.random() * 0.8; beep(600, 0.05, 'triangle', 0.03, -250); }
     if (d < 3.3) { if (!safeMove(e, -Math.cos(ang), -Math.sin(ang), e.speed * 0.9)) strafe(e, ang); return; }
     if (d > 6) return chase(e, t, dt);
     return strafe(e, ang);
   }
+  // Void-Maps: so hinstellen, dass der Schlag den Gegner über die Kante schiebt
+  if (S.void && d < 3.2 && (e.edgeT || 0) < 1.6) {
+    const va = voidAngle(t, 2.2);
+    if (va !== null) {
+      const px = t.x - Math.cos(va) * 1.05, py = t.y - Math.sin(va) * 1.05;
+      const off = Math.hypot(e.x - px, e.y - py);
+      if (off > 0.55 && walkable(tileAt(px, py)) && tileAt(px, py) !== 0) {
+        e.edgeT = (e.edgeT || 0) + dt;
+        // außen herum laufen, nicht durch den Gegner hindurch
+        const side = Math.atan2(py - t.y, px - t.x), cur = Math.atan2(e.y - t.y, e.x - t.x);
+        let da = side - cur; while (da > Math.PI) da -= 2 * Math.PI; while (da < -Math.PI) da += 2 * Math.PI;
+        const na = cur + Math.sign(da) * Math.min(Math.abs(da), 0.9), r = Math.max(1.05, Math.min(d, 1.6));
+        if (safeMove(e, t.x + Math.cos(na) * r - e.x, t.y + Math.sin(na) * r - e.y, e.speed)) { if (d <= 1.25 && e.atkCd <= 0 && off < 0.9) attack(e); return; }
+      }
+    }
+  }
   if (d <= 1.25) {
-    if (e.atkCd <= 0) { attack(e); e.strafeT = 0.3 + Math.random() * 0.35; e.strafeDir = Math.random() < 0.5 ? -1 : 1; }
+    // eigener Rücken zum Abgrund: erst zur Seite
+    const mine = voidAngle(e, 1.4);
+    if (mine !== null && Math.abs(((mine - (ang + Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI) < 0.8 && e.strafeT <= 0) { e.strafeT = 0.35; e.strafeDir = Math.random() < 0.5 ? -1 : 1; }
+    if (e.atkCd <= 0) { attack(e); e.edgeT = 0; e.strafeT = 0.3 + Math.random() * 0.35; e.strafeDir = Math.random() < 0.5 ? -1 : 1; }
     if (e.strafeT > 0) { e.strafeT -= dt; return strafe(e, ang); }
     e.vx = e.vy = 0; return;
   }
@@ -830,7 +903,7 @@ function followField(e, d, dt) {
   if (isWall(t)) {
     if (!breakable(t)) { e.vx = e.vy = 0; return; }
     e.vx = e.vy = 0; e.breakT += dt;
-    if (e.breakT > 0.5) { e.breakT = 0; e.swing = 0.18; chipWall(n.x, n.y, 0.3 + e.sword * 0.08, e); if (Math.random() < 0.04) say(e, 'Mach die Mauer weg!!'); }
+    if (e.breakT > 0.5) { e.breakT = 0; e.swing = 0.18; chipWall(n.x, n.y, 0.24 + e.sword * 0.06, e); if (Math.random() < 0.04) say(e, 'Mach die Mauer weg!!'); }
     return;
   }
   e.breakT = 0;
@@ -852,9 +925,26 @@ function partnerThink(a) {
     a.state = 'retreat'; a.goal = home; return;
   }
   if (a.state === 'retreat' && a.hp < a.max * 0.85 && bed.alive) return;
-  const intruder = bed.alive ? nearest({ x: bed.x + 0.5, y: bed.y + 1 }, 7) : null;
-  if (intruder) { a.state = 'fight'; a.target = intruder; return; }
-  const close = nearest(a, 4.5); if (close) { a.state = 'fight'; a.target = close; return; }
+  const bedPos = { x: bed.x + 0.5, y: bed.y + 1 }, playerHome = !p.dead && bed.alive && dist(p, home) < 9;
+  // Bett schützen; ist der Spieler unterwegs, schon früher zurücklaufen und Bescheid sagen
+  const intruder = bed.alive ? (nearest(bedPos, 7) || (!playerHome ? nearest(bedPos, 12) : null)) : null;
+  if (intruder) {
+    if (a.state !== 'fight' && dist(a, home) > 9 && S.t - (a.callT || -99) > 12) { a.callT = S.t; say(a, `${TEAMS[intruder.team].name} läuft auf unser Bett zu, ich geh zurück!`, 2.6); }
+    a.state = 'fight'; a.target = intruder; return;
+  }
+  // Rückendeckung: wer den Spieler gerade haut, ist dran
+  const bully = !p.dead && S.t - (p.lastHurt ?? -99) < 2.5 && p.lastHitBy && !p.lastHitBy.dead && p.lastHitBy.team !== 'gruen' && dist(p.lastHitBy, a) < 10 ? p.lastHitBy : null;
+  if (bully && bully.fallT <= 0 && walkable(tileAt(bully.x, bully.y))) {
+    if (a.target !== bully && Math.random() < 0.4) say(a, ['Ich helf dir!', 'Lass ihn, ich komm!', 'Den nehm ich!'][(Math.random() * 3) | 0]);
+    a.state = 'fight'; a.target = bully; return;
+  }
+  const close = pickFoe(a, enemies, 4.5); if (close) { a.state = 'fight'; a.target = close; return; }
+  // Spieler greift ein Bett an: mit drauf hauen
+  const raid = !p.dead && S.enemyTeams.find(t => S.beds[t].alive && dist(p, { x: S.beds[t].x + 0.5, y: S.beds[t].y + 1 }) < 6);
+  if (raid && (!S.void || a.inv.sand >= 3 || dist(a, p) < 8)) {
+    if (a.state !== 'raid') say(a, ['Ich hau mit aufs Bett!', `Bett von ${TEAMS[raid].name}, los!`, 'Zusammen geht das schneller!'][(Math.random() * 3) | 0]);
+    a.state = 'raid'; a.raidTeam = raid; return;
+  }
   // Brücke abschneiden, wenn ein Gegner über eine gebaute Brücke kommt
   if (bed.alive && S.void) {
     const onBridge = enemies.find(e => S.placed[Math.floor(e.y) * MW + Math.floor(e.x)] && dist(e, home) < 11);
@@ -896,6 +986,17 @@ function partnerThink(a) {
     a.state = 'escort'; a.goal = { x: p.x - p.fx * 1.3, y: p.y - p.fy * 1.3 }; return;
   }
   if (!bed.alive) { a.state = 'escort'; a.goal = { x: p.x - 1, y: p.y + 0.5 }; return; }
+  // Tipp an den Spieler: ein Bett steht ohne Wache da
+  if (S.t - (a.scoutT || 0) > 45 && S.t > 40) {
+    const open = S.enemyTeams.find(t => S.beds[t].alive && !S.ents.some(e => e.team === t && !e.dead && dist(e, { x: S.beds[t].x + 0.5, y: S.beds[t].y + 1 }) < 9));
+    if (open) { a.scoutT = S.t; say(a, `Bei ${TEAMS[open].name} ist gerade keiner am Bett!`, 2.8); }
+  }
+  // Gold aus der Mitte holen, wenn zu Hause alles ruhig ist und der Spieler aufpasst
+  const goldIt = nearestItem(a, i => !i.gen.team && i.kind === 'gold', 30);
+  if (goldIt && playerHome && a.sword >= 1 && (!S.void || a.inv.sand >= 12) && !nearest(goldIt, 6) && (a.state === 'gold' || S.t - (a.goldT || -99) > 30)) {
+    if (a.state !== 'gold') { a.goldT = S.t; say(a, 'Du passt auf, ich hol Gold aus der Mitte!', 2.6); }
+    a.state = 'gold'; a.goal = goldIt; return;
+  }
   // farmen, wenn genug rumliegt und der Spieler nicht selbst gerade sammelt
   const broke = a.sword === 0 || (S.void && a.inv.sand < 8);
   const it = nearestItem(a, i => i.gen && i.gen.team === 'gruen' && (broke || dist(p, i) > 3), 14);
@@ -911,6 +1012,12 @@ function partnerAI(a, dt) {
   if (a.state === 'build') { if (tryFortify(a, dt)) return; a.thinkT = 0; }
   if (a.state === 'cut') { if (tryCut(a, dt)) return; a.thinkT = 0; }
   if (a.state === 'retreat') blockBehind(a, dt);
+  if (a.state === 'raid' && a.raidTeam) {
+    const tk = a.raidTeam;
+    if (!S.beds[tk].alive) { a.thinkT = 0; a.vx = a.vy = 0; return; }
+    if (canHitBed(a, tk)) { a.vx = a.vy = 0; if (a.atkCd <= 0) { a.atkCd = 0.6; a.swing = 0.18; hitBed(tk, 2 + 1.5 * a.sword, a); } return; }
+    return followField(a, fieldTo(bedSources(tk), 'bed_' + tk, 3), dt);
+  }
   moveToGoal(a, dt);
 }
 
@@ -973,8 +1080,10 @@ function heroDmg(a) {
   if (a === S.partner) return SWORDS[a.sword].dmg * 0.75 + (a.boost ? 2 : 0);
   return SWORDS[S.sword].dmg + (a.def.dmgBonus || 0);
 }
-function attack(a) {
+// mode: 'fight' = Schlagen/Bett/Bogen (Leertaste), 'mine' = nur abbauen (R), 'all' = alles (Handy-Knopf, KI)
+function attack(a, mode = 'all') {
   if (a.atkCd > 0 || a.dead || a.fallT > 0) return false;
+  if (mode === 'mine') { if (!mineFacing(a) && ctrl(a)) { a.atkCd = 0.2; a.swing = 0.18; } return true; }
   let target = null, td = 1.45;
   for (const e of S.ents) {
     if (e === a || e.dead || e.team === a.team || e.fallT > 0) continue;
@@ -1001,10 +1110,7 @@ function attack(a) {
     }
   }
   // Block direkt vor einem abbauen (hat Vorrang vor dem Bogen)
-  if (ctrl(a)) {
-    const f = facingBlock(a);
-    if (f) { a.atkCd = 0.3; a.swing = 0.18; f.floor ? mineFloor(f.x, f.y, 0.35, a) : chipWall(f.x, f.y, 0.35, a); return true; }
-  }
+  if (ctrl(a) && mode === 'all' && mineFacing(a)) return true;
   if (ctrl(a) && bowOf(a)) {
     let tgt = null, bd = 7.5;
     for (const e of S.ents) if (e.team !== a.team && !e.dead && e.fallT <= 0) { const d = dist(a, e); if (d < bd) { bd = d; tgt = e; } }
@@ -1014,8 +1120,19 @@ function attack(a) {
       return true;
     }
   }
+  if (a === S.player && mode === 'fight' && !S.mineHint && facingBlock(a)) { S.mineHint = true; caption('Blöcke abbauen\nmit R', -5, 0.3, 0.3); }
   if (ctrl(a)) { a.atkCd = 0.25; a.swing = 0.18; }
   return false;
+}
+// Abbauen braucht ein paar Schläge: Mauer ~1,3 s, Brückenblock ~0,8 s, Holzwand ~2,3 s (bessere Schwerter etwas schneller)
+function mineFacing(a) {
+  if (!ctrl(a)) return false;
+  const f = facingBlock(a);
+  if (!f) return false;
+  const sw = a === S.player ? S.sword : a.sword, amt = 0.16 + 0.03 * sw;
+  a.atkCd = 0.25; a.swing = 0.18;
+  f.floor ? mineFloor(f.x, f.y, amt, a) : chipWall(f.x, f.y, amt, a);
+  return true;
 }
 // welcher abbaubare Block liegt direkt vor dem Helden? (Mauer, Holzwand, Hecke oder selbst gebaute Brücke)
 function facingBlock(a) {
@@ -1031,7 +1148,9 @@ function facingBlock(a) {
   return null;
 }
 function shootArrow(from, tgt, speed, dmg, spread) {
-  const ang = Math.atan2(tgt.y - from.y, tgt.x - from.x) + (Math.random() - 0.5) * spread;
+  // vorhalten: dahin zielen, wo das Ziel gleich sein wird
+  const tt = dist(from, tgt) / speed, lx = tgt.x + (tgt.vx || 0) * tt * 0.8, ly = tgt.y + (tgt.vy || 0) * tt * 0.8;
+  const ang = Math.atan2(ly - from.y, lx - from.x) + (Math.random() - 0.5) * spread;
   S.arrows.push({ x: from.x, y: from.y - 0.5, vx: Math.cos(ang) * speed, vy: Math.sin(ang) * speed, t: 0.9, team: from.team, from, dmg });
   from.dir = Math.cos(ang) >= 0 ? 1 : -1;
 }
@@ -1146,7 +1265,7 @@ function tryCut(u, dt) {
   const c = u.cut; if (!c || !S.placed[c.y * MW + c.x]) { u.cut = null; return false; }
   if (Math.hypot(u.x - c.sx, u.y - c.sy) > 0.5) { u.goal = { x: c.sx, y: c.sy }; moveToGoal(u, dt); return true; }
   u.vx = u.vy = 0; u.dir = c.x + 0.5 >= u.x ? 1 : -1; u.breakT += dt;
-  if (u.breakT >= 0.45) { u.breakT = 0; u.swing = 0.18; mineFloor(c.x, c.y, 0.35, u); if (!S.placed[c.y * MW + c.x]) { if (Math.random() < 0.5) say(u, 'Brücke weg! Viel Spaß im Void.'); u.cut = null; } }
+  if (u.breakT >= 0.45) { u.breakT = 0; u.swing = 0.18; mineFloor(c.x, c.y, 0.26, u); if (!S.placed[c.y * MW + c.x]) { if (Math.random() < 0.5) say(u, 'Brücke weg! Viel Spaß im Void.'); u.cut = null; } }
   return true;
 }
 // auf der Flucht einen Block hinter sich setzen
@@ -1242,7 +1361,8 @@ function update(dt) {
   if (Math.hypot(mx, my) > 0.3) { const L = Math.hypot(mx, my); p.fx = mx / L; p.fy = my / L; }
   if (!p.dead && p.fallT <= 0) {
     p.vx = mx * p.def.speed; p.vy = my * p.def.speed;
-    if (input.hit) attack(p);
+    if (input.mine) attack(p, 'mine');
+    else if (input.hit || input.hitAll) attack(p, input.hitAll ? 'all' : 'fight');
   }
   heroBuild(p, dt, input.build);
   if (!S.partner.remote) partnerAI(S.partner, dt);
@@ -1509,7 +1629,7 @@ function render() {
   const fb = facingBlock(p);
   if (fb) {
     const lift = fb.floor ? 0 : 14;
-    ctx.strokeStyle = input.hit ? 'rgba(255,255,255,.95)' : 'rgba(255,255,255,.45)'; ctx.lineWidth = 2;
+    ctx.strokeStyle = input.mine || input.hitAll ? 'rgba(255,255,255,.95)' : 'rgba(255,255,255,.45)'; ctx.lineWidth = 2;
     ctx.strokeRect(fb.x * T + 1, fb.y * T + 1 - lift, T - 2, T - 2);
   }
   // Bau-Vorschau
@@ -1749,4 +1869,3 @@ function loop(now) {
 requestAnimationFrame(loop);
 
 // Debug-Hook für Tests
-

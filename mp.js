@@ -61,7 +61,7 @@ function mpSetupGuest() {
   const team = MP.coop ? 'gruen' : (S.enemyTeams.includes('rot') ? 'rot' : S.enemyTeams[0]);
   const sp = team === 'gruen' ? nearestWalkable(S.spawn.x + 1, S.spawn.y) : spawnPoint(team);
   const g = mkChar(gc, def, sp.x, sp.y, false);
-  g.team = team; g.remote = true; if (!MP.coop) g.name = def.name + ' (P2)'; g.rin = { mx: 0, my: 0, hit: false, build: false, shop: false };
+  g.team = team; g.remote = true; if (!MP.coop) g.name = def.name + ' (P2)'; g.rin = { mx: 0, my: 0, hit: false, mine: false, all: false, build: false, shop: false };
   g.inv.bronze = 4; g.inv.sand = 24;
   if (MP.coop) { S.ents = S.ents.filter(e => e !== S.partner); S.partner = g; }
   S.ents.push(g); S.guest = g;
@@ -84,7 +84,8 @@ function netControl(g, dt) {
   if (L > 1) { mx /= L; my /= L; }
   if (L > 0.3) { g.fx = mx / Math.hypot(mx, my); g.fy = my / Math.hypot(mx, my); }
   g.vx = r.shop ? 0 : mx * g.def.speed; g.vy = r.shop ? 0 : my * g.def.speed;
-  if (r.hit && !r.shop) attack(g);
+  if (r.mine && !r.shop) attack(g, 'mine');
+  else if (r.hit && !r.shop) attack(g, r.all ? 'all' : 'fight');
   heroBuild(g, dt, r.build && !r.shop);
 }
 function remoteBuy(g, id) {
@@ -306,14 +307,14 @@ function guestTick(dt) {
     if (me.pred) { me.x = me.pred.x + me.vox; me.y = me.pred.y + me.voy; }
     // Schwertschwung sofort zeigen
     me.swingCd = Math.max(0, (me.swingCd || 0) - dt); me.swing = Math.max(0, (me.swing || 0) - dt);
-    if (input.hit && !shopOpen && me.swingCd <= 0 && !me.dead) { me.swing = 0.18; me.swingCd = 0.38; }
+    if ((input.hit || input.hitAll || input.mine) && !shopOpen && me.swingCd <= 0 && !me.dead) { me.swing = 0.18; me.swingCd = 0.38; }
   }
   // 30× pro Sekunde Eingaben senden, mit Sequenznummer für den Abgleich
   MP.inT -= dt;
   if (MP.inT <= 0 && MP.conn && MP.conn.open) {
     MP.inT = 1 / 30; MP.seq = (MP.seq || 0) + 1;
     if (me && me.pred) MP.hist.set(MP.seq, { x: me.pred.x, y: me.pred.y });
-    MP.conn.send({ t: 'in', seq: MP.seq, mx, my, hit: input.hit, build: input.build, shop: shopOpen });
+    MP.conn.send({ t: 'in', seq: MP.seq, mx, my, hit: input.hit || input.hitAll, all: !!input.hitAll, mine: !!input.mine, build: input.build, shop: shopOpen });
   }
   const near = me && !me.dead && dist(me, S.shopNpc) < 2.6;
   $('shopHint').classList.toggle('hidden', !near);
